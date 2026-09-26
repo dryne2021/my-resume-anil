@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Dryne Agency favicon">
+  <rect width="64" height="64" rx="12" fill="#12100B"/>
+  <path d="M18 14h16c10.5 0 18 7 18 18s-7.5 18-18 18H18V14zm11 10v20h4.5c5.9 0 9.5-4.4 9.5-12s-3.6-8-9.5-8H29z" fill="#D6B56D"/>
+  <path d="M14 52h36" stroke="#F4E6B8" stroke-width="3" stroke-linecap="round" opacity=".75"/>
+</svg>
