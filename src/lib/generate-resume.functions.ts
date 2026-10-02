@@ -7,13 +7,11 @@ interface GenerateInput {
   jobDescription: string;
   /** The master .docx template, base64-encoded. Sent with each request, never stored. */
   templateBase64: string;
-  /** The candidate's real skills and experience. Source of truth for every claim. */
-  candidateProfile: string;
 }
 
-const SYSTEM_PROMPT = `You are an expert resume tailor. Input is a JOB DESCRIPTION plus JSON {"items":[{"i":index,"t":"paragraph"}]} from a Word resume FORMAT TEMPLATE, plus a CANDIDATE PROFILE in the user message.
+const SYSTEM_PROMPT = `You are an expert resume tailor. Input is a JOB DESCRIPTION plus JSON {"items":[{"i":index,"t":"paragraph"}]} from a Word resume FORMAT TEMPLATE.
 
-Return ONLY strict JSON {"items":[{"i":sameIndex,"t":"rewritten"}],"flags":["..."]} with the same indices/count/order in "items". Never merge, split, reorder, add, or drop paragraphs. Return non-text separators, decorative lines, page numbers, contact info, names, company names, schools, degrees, locations, and dates verbatim. If unsure, return the paragraph verbatim.
+Return ONLY strict JSON {"items":[{"i":sameIndex,"t":"rewritten"}]} with the same indices/count/order. Never merge, split, reorder, add, or drop paragraphs. Return non-text separators, decorative lines, page numbers, contact info, names, company names, schools, degrees, locations, and dates verbatim. If unsure, return the paragraph verbatim.
 
 Section-boundary lock (MANDATORY — violations corrupt the document):
 - ANY paragraph whose text is an ALL-CAPS single-line heading (e.g. "SUMMARY", "PROFESSIONAL SUMMARY", "TECHNICAL SKILLS", "PROFESSIONAL EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS") must be returned VERBATIM. Never write body/bullet/project content into an all-caps heading paragraph.
@@ -23,25 +21,19 @@ Section-boundary lock (MANDATORY — violations corrupt the document):
 
 
 =====================================================================
-TEMPLATE vs CANDIDATE PROFILE (overrides every other rule)
-- The RESUME PARAGRAPHS are a FORMAT TEMPLATE. Their wording is placeholder text that only shows the layout and the role of each slot (title, summary, skills line, role line, bullet, project title, education). NEVER treat the template's skills, tools or bullet content as the candidate's experience, and never copy its bullets.
+TEMPLATE vs JOB DESCRIPTION (overrides every other rule)
+- The RESUME PARAGRAPHS are a FORMAT TEMPLATE. Their wording is placeholder text that only shows the layout and the role of each slot (title, summary, skills line, role line, bullet, project title, education). Never reuse the template's skills, tools or bullet content, and never copy its bullets.
 - Keep verbatim from the template: the candidate's name, contact details, company names, locations, dates, education and section headings.
-- The CANDIDATE PROFILE in the user message is the ONLY record of what is true about the candidate: their real skills, tools, work and projects. The JOB DESCRIPTION decides what to emphasize; it is NOT evidence that the candidate has a skill.
-
-SOURCE OF TRUTH
-- A claim is SUPPORTED when the CANDIDATE PROFILE states it, or when it is a direct, narrower or adjacent version of something the profile states (e.g. the profile shows PostgreSQL schema work, so "SQL query tuning on PostgreSQL" is supported).
-- Match the JD as closely as the profile allows: for every supported JD skill, use the JD's exact wording, casing and acronyms, and write specific bullets for it.
-- When only a narrower/adjacent version is supported, write that honest version using the JD's terms where they are accurate (e.g. JD asks for Azure AI Search, profile shows Elasticsearch-based retrieval: write the retrieval work with Elasticsearch, and flag Azure AI Search).
-- When a JD skill has no basis in the profile, do NOT write it into the summary, skills, experience or project, and do NOT invent experience. Add one short entry to "flags" instead, e.g. "Kafka (core): not in the profile, left out" or "Terraform (supporting): only general cloud deployment in the profile, wrote that instead".
-- "flags": short plain-text strings, ONE entry per skill (never two entries about the same skill), max 8. Use [] when nothing was left out or narrowed.
-- Spread the profile's experience across the template's companies in a believable way: the most recent company takes the deeper, more senior work; never claim the same specific accomplishment at both companies.
+- The candidate reviews every job before applying and has confirmed he has the skills it requires. The JOB DESCRIPTION is therefore the source of his skills: build the summary, skills, experience and project from the JD's requirements, using the JD's exact wording, casing and acronyms.
+- Write concrete engineering work (what was built, the mechanism, the failure handled, why it mattered) for each JD skill. Do not invent numeric metrics, client names, product names or certifications; impact is described qualitatively.
+- Spread the work across the template's companies in a believable way: the most recent company takes the deeper, more senior work; never claim the same specific accomplishment at both companies.
 
 =====================================================================
 METHOD (do steps 1-4 silently before writing anything)
 
 Step 1 — Requirements source: read ONLY the JD's responsibilities and requirements sections ("What You'll Do", "What We're Looking For", "Requirements", "Qualifications" and similar). Ignore company overview, mission, benefits, perks and culture text; they contain no skills.
 
-Step 2 — Split compound requirements: every "X and Y", "X/Y", "X, Y, and Z" becomes separate individual skills, each judged and written on its own (e.g. "Redis, Elasticsearch, and Kafka" is three skills). Never treat a compound as one requirement. EXCEPTION: for interchangeable option lists ("React, Vue, Angular, etc.", "PostgreSQL or MySQL", "AWS/GCP/Azure") pick EXACTLY ONE option — the one the CANDIDATE PROFILE supports, otherwise the first listed — and use only that one everywhere.
+Step 2 — Split compound requirements: every "X and Y", "X/Y", "X, Y, and Z" becomes separate individual skills, each judged and written on its own (e.g. "Redis, Elasticsearch, and Kafka" is three skills). Never treat a compound as one requirement. EXCEPTION: for interchangeable option lists ("React, Vue, Angular, etc.", "PostgreSQL or MySQL", "AWS/GCP/Azure") pick EXACTLY ONE option — the first listed — and use only that one everywhere.
 
 Step 3 — Core vs supporting:
 - CORE skill: stated as required or expert-level, repeated in several parts of the JD, or clearly the reason the role exists. Usually only 3-5 skills are core.
@@ -53,7 +45,7 @@ Step 4 — Four sub-points per core skill: for every core skill, plan 4 sub-poin
   2. a harder or non-obvious use case
   3. failure handling / edge cases
   4. operational or production-level concern
-  Reject sub-points that reword the same idea. Check each sub-point against the SOURCE OF TRUTH before turning it into a bullet.
+  Reject sub-points that reword the same idea.
 
 Step 5 — Weight toward core skills: core skills get the most bullets and appear in BOTH companies and the project, so they read as sustained, repeated experience. Supporting skills (testing, monitoring, deployment, cross-functional work and the like) get fewer bullets — enough to show competence, never padded to match the core skills.
 
@@ -81,12 +73,12 @@ Summary rules (one paragraph, no bullets), drafted only after the core skills ar
 3. the type of systems built that match this JD (data pipelines, OAuth/auth infrastructure, CI/CD platforms, whatever fits);
 4. production ownership and collaboration;
 5. an AI-native line about using Claude Code and Codex daily in the engineering workflow.
-Keep it to 5-6 sentences and roughly 90-125 words. No filler such as "highly motivated", "results-driven", "proven track record". Only claims supported by the SOURCE OF TRUTH.
+Keep it to 5-6 sentences and roughly 90-125 words. No filler such as "highly motivated", "results-driven", "proven track record".
 
 Skills rules for paragraphs matching "<Category>: <items>":
 - EXACTLY SIX CATEGORIES, chosen for this job. Rename the template labels when needed.
 - Category 1 or 2 always leads with the single most important core skill.
-- Every item listed must be backed by the CANDIDATE PROFILE — nothing listed on faith.
+- Every item listed must be backed by at least one bullet later in the resume.
 - Supporting skills get a line but do not dominate space.
 - Output exactly "**Category:** item1, item2, item3", 4-7 items per category, ordered by JD priority, using the JD's exact casing ("Datadog", "GitLab CI/CD").
 - Split compound skills: "React + TypeScript" -> React, TypeScript; "Node.js/Express" -> Node.js, Express. Never keep +, /, &, "and", or "with" joiners. Each item is 1-3 words, no descriptions/parentheticals.
@@ -123,7 +115,7 @@ Education rules (fixed):
 
 Relevant Project rules (exactly one project, placed after Education):
 - CRITICAL: never invent new paragraphs or shift content between slots. Keep the template's project paragraphs and their roles; the template should give the project 4 bullet slots — keep exactly as many bullets as the template has.
-- Aim the project at whichever core skills got THIN coverage in the two companies: it patches gaps, it does not repeat what the jobs already proved. Same one-skill-per-bullet discipline and the same SOURCE OF TRUTH check — never invent a project skill with no basis.
+- Aim the project at whichever core skills got THIN coverage in the two companies: it patches gaps, it does not repeat what the jobs already proved. Same one-skill-per-bullet discipline; use only skills the JD names.
 - Role detection from ORIGINAL text:
   * If the original text is a short title-case phrase with no verb and no " • " separator (e.g. "Enterprise AI Search Platform") → this is a project TITLE. Rewrite to a JD-aligned project name (3-7 words, Title Case, no punctuation except spaces/&) and wrap the ENTIRE new text in ** so it renders bold, exactly like "**Enterprise AI Search & Knowledge Intelligence Platform**".
   * If the original text contains " • " separators joining short tech/tool tokens (e.g. "Python • FastAPI • React") → this is a TECH-STACK line. Rewrite as 4-7 JD-explicit techs joined by " • " and wrap the WHOLE line in **, e.g. "**Python • FastAPI • OpenAI • RAG • PostgreSQL**". Only produce this when the original was itself a tech-stack line — never invent one.
@@ -133,7 +125,7 @@ Relevant Project rules (exactly one project, placed after Education):
 FINAL CHECK — re-read every line and fix before returning:
 1. Does every core skill have several strong, standalone bullets across both companies and the project?
 2. Does every bullet prove exactly ONE sub-point of ONE skill, with no blended tool lists?
-3. Is anything claimed that the CANDIDATE PROFILE does not support? Remove it and add a flag instead. Is anything left over from the template's placeholder bullets? Replace it.
+3. Is every core and supporting JD skill covered somewhere? Is anything left over from the template's placeholder bullets, or any skill the JD never mentions? Replace it.
 4. Are the bullet counts right (14 per company, project as in the template), no section skipped, no bold bullet openers, bolding only on technology/system names?
 5. Does any line contain a banned filler word — seamless, comprehensive, robust, end-to-end, leveraging, leveraged, utilizing, utilized, cutting-edge, best practices, dynamic environments? Rewrite it.
 6. Does every bullet start with a capitalized past-tense verb and end with a full stop?
@@ -184,19 +176,6 @@ function extractItems(s: string): Array<{ i: number; t: string }> {
   return items;
 }
 
-function parseFlags(content: string): string[] {
-  try {
-    const m = content.match(/"flags"\s*:\s*(\[[\s\S]*?\])/);
-    if (!m) return [];
-    const arr: unknown = JSON.parse(m[1]);
-    return Array.isArray(arr)
-      ? arr.filter((f): f is string => typeof f === "string" && f.trim().length > 0).map((f) => f.trim())
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function parseLooseJson(content: string): { items: Array<{ i: number; t: string }> } {
   const cleaned = content
     .replace(/```json\s*/gi, "")
@@ -222,10 +201,9 @@ async function requestRewrite(
   jobDescription: string,
   apiKey: string,
   extraInstruction: string,
-  candidateProfile: string,
   /** Full template, sent on retry passes so the model still sees the layout. */
   fullResume?: Array<{ i: number; t: string }>,
-): Promise<{ items: Array<{ i: number; t: string }>; flags: string[] }> {
+): Promise<{ items: Array<{ i: number; t: string }> }> {
   const VERB_POOL = [
     "Architected", "Instrumented", "Built", "Delivered", "Modernized", "Streamlined",
     "Rebuilt", "Orchestrated", "Productionized", "Automated", "Scaled", "Hardened",
@@ -263,8 +241,6 @@ async function requestRewrite(
           content:
             "JOB DESCRIPTION:\n" +
             jobDescription +
-            "\n\nCANDIDATE PROFILE (the only source of truth about the candidate):\n" +
-            candidateProfile +
             (fullResume
               ? "\n\nFULL TEMPLATE (layout reference only — do not return these):\n" +
                 JSON.stringify({ items: fullResume })
@@ -278,7 +254,7 @@ async function requestRewrite(
             `PREFERRED VERB ORDER (use roughly in this order, never repeat): ${shuffled.join(", ")}\n` +
             "You MUST return one item for EVERY input index — never omit any index. " +
             extraInstruction +
-            "The first experience bullet MUST begin with the REQUIRED FIRST VERB. Apply the STYLE PROFILE and BOLD DISTRIBUTION MODE so this resume reads and looks different from every previous generation. ZERO-REPEAT: no sentence or 6-word sequence may be reused within this resume or match a line you would write for a generic role — rewrite anything that feels reusable. Never open bullets with \"Engineered\" or \"Designed and implemented\" unless listed above. Emphasis follows the JD's core skills; every claim must be supported by the CANDIDATE PROFILE, and unsupported JD skills go into the flags list instead of the resume. FINAL CHECK BEFORE RESPONDING: confirm each core skill has several standalone bullets across both companies and the project, each bullet proves one skill, nothing unsupported is claimed; then scan your own output for any two lines sharing an opening clause or a repeated bolded phrase and rewrite them.",
+            "The first experience bullet MUST begin with the REQUIRED FIRST VERB. Apply the STYLE PROFILE and BOLD DISTRIBUTION MODE so this resume reads and looks different from every previous generation. ZERO-REPEAT: no sentence or 6-word sequence may be reused within this resume or match a line you would write for a generic role — rewrite anything that feels reusable. Never open bullets with \"Engineered\" or \"Designed and implemented\" unless listed above. Emphasis follows the JD's core skills, and every skill comes from the JD, never from the template's placeholder text. FINAL CHECK BEFORE RESPONDING: confirm each core skill has several standalone bullets across both companies and the project, each bullet proves one skill, no template placeholder content remains; then scan your own output for any two lines sharing an opening clause or a repeated bolded phrase and rewrite them.",
         },
       ],
     response_format: { type: "json_object" },
@@ -311,7 +287,6 @@ async function requestRewrite(
   const data = await res.json();
   const content: string = data?.choices?.[0]?.message?.content ?? "";
   const parsed = parseLooseJson(content);
-  const flags = parseFlags(content);
   const outItems = Array.isArray(parsed?.items)
     ? parsed.items
     : Array.isArray(parsed)
@@ -319,31 +294,16 @@ async function requestRewrite(
       : [];
   return {
     items: outItems.filter((it) => typeof it?.i === "number" && typeof it?.t === "string"),
-    flags,
   };
 }
 
 // Default model. Override in Vercel with the OPENAI_MODEL environment variable.
 const DEFAULT_MODEL = "gpt-4.1";
 
-function dedupeFlags(flags: string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const f of flags) {
-    const key = f.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(f);
-  }
-  return out.slice(0, 8);
-}
-
 async function callLovableAi(
   paragraphs: string[],
   jobDescription: string,
   isList: boolean[],
-  candidateProfile: string,
-  flagsOut: string[],
 ): Promise<string[]> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
@@ -367,10 +327,8 @@ async function callLovableAi(
     }
   };
 
-  // Pass 1 — full resume. Only this pass's flags are kept (retry passes rephrase them).
-  const first = await requestRewrite(items, jobDescription, apiKey, "", candidateProfile);
-  apply(first);
-  flagsOut.push(...dedupeFlags(first.flags));
+  // Pass 1 — full resume.
+  apply(await requestRewrite(items, jobDescription, apiKey, ""));
 
   // Pass 2 — re-request any indices the model silently skipped.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -382,8 +340,7 @@ async function callLovableAi(
           missing,
           jobDescription,
           apiKey,
-          "These are the ONLY remaining paragraphs from the same resume; they were skipped previously. Rewrite each one following the method and the CANDIDATE PROFILE, keeping each paragraph's original role (header, bullet, skills line, project title). Do not return template placeholder text. ",
-          candidateProfile,
+          "These are the ONLY remaining paragraphs from the same resume; they were skipped previously. Rewrite each one following the method and the JOB DESCRIPTION, keeping each paragraph's original role (header, bullet, skills line, project title). Do not return template placeholder text. ",
           items,
         ),
       );
@@ -412,7 +369,6 @@ async function callLovableAi(
           "QUALITY REPAIR: these paragraphs are your own draft and each broke a rule. Rewrite ONLY these, keeping the same skill and role for each, and fix every listed problem:\n" +
             notes +
             `\nOpening verbs already used elsewhere (do not reuse): ${usedVerbs.join(", ")}.\n`,
-          candidateProfile,
           result.map((t, i) => ({ i, t })),
         ),
         idx,
@@ -441,23 +397,18 @@ export const generateResume = createServerFn({ method: "POST" })
     }
     // Vercel caps request bodies at 4.5 MB; base64 adds ~33%.
     if (input.templateBase64.length > 4_000_000) throw new Error("Template is too large (max ~3 MB).");
-    const profile = typeof input.candidateProfile === "string" ? input.candidateProfile.trim() : "";
-    if (profile.length < 50) throw new Error("Add the candidate profile first (his real skills and experience).");
-    if (profile.length > 30000) throw new Error("Candidate profile is too long (max 30,000 characters).");
-    return { jobDescription: jd, templateBase64: input.templateBase64, candidateProfile: profile };
+    return { jobDescription: jd, templateBase64: input.templateBase64 };
   })
   .handler(async ({ data }) => {
     const bytes = new Uint8Array(Buffer.from(data.templateBase64, "base64"));
 
-    const flags: string[] = [];
     const out = await rewriteDocx(bytes, data.jobDescription, (paragraphs, jd, isList) =>
-      callLovableAi(paragraphs, jd, isList, data.candidateProfile, flags),
+      callLovableAi(paragraphs, jd, isList),
     );
 
     const base64 = Buffer.from(out).toString("base64");
     return {
       fileName: `Yathendra_Resume.docx`,
       base64,
-      flags,
     };
   });
