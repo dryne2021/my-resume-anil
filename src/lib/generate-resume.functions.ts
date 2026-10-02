@@ -1,14 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireOwner } from "./auth.functions";
 import { rewriteDocx } from "./docx-rewrite";
+import { findProblems, plain } from "./resume-quality";
 
 interface GenerateInput {
   jobDescription: string;
   /** The master .docx template, base64-encoded. Sent with each request, never stored. */
   templateBase64: string;
+  /** The candidate's real skills and experience. Source of truth for every claim. */
+  candidateProfile: string;
 }
 
-const SYSTEM_PROMPT = `You are an expert resume tailor. Input is a JOB DESCRIPTION plus JSON {"items":[{"i":index,"t":"paragraph"}]} from the candidate's Word resume.
+const SYSTEM_PROMPT = `You are an expert resume tailor. Input is a JOB DESCRIPTION plus JSON {"items":[{"i":index,"t":"paragraph"}]} from a Word resume FORMAT TEMPLATE, plus a CANDIDATE PROFILE in the user message.
 
 Return ONLY strict JSON {"items":[{"i":sameIndex,"t":"rewritten"}],"flags":["..."]} with the same indices/count/order in "items". Never merge, split, reorder, add, or drop paragraphs. Return non-text separators, decorative lines, page numbers, contact info, names, company names, schools, degrees, locations, and dates verbatim. If unsure, return the paragraph verbatim.
 
@@ -20,21 +23,25 @@ Section-boundary lock (MANDATORY — violations corrupt the document):
 
 
 =====================================================================
-SOURCE OF TRUTH (overrides every other rule)
-- The candidate's ORIGINAL resume paragraphs in the input are the record of what is actually true about them. The JOB DESCRIPTION decides what to emphasize; it is NOT evidence that the candidate has a skill.
-- A claim is SUPPORTED when the original resume states it, or when it is a direct, narrower or adjacent version of something the original states (e.g. the original shows PostgreSQL schema work, so "SQL query tuning on PostgreSQL" is supported).
-- When a JD skill or sub-point is supported, write a specific bullet for it.
-- When only a narrower/adjacent version is supported, write that honest narrower version instead of the inflated JD claim.
-- When a JD skill or sub-point has no basis in the original resume, do NOT write it into the summary, skills, experience or project, and do NOT invent experience to fill the gap. Add one short entry to "flags" instead, e.g. "Kafka (core): nothing in the resume supports it, left out" or "Terraform (supporting): only general cloud deployment is supported, wrote that instead".
-- Technologies in the original resume that this JD does not care about are dropped to save space.
-- "flags" is an array of short plain-text strings (max 10). Use [] when nothing was left out or narrowed.
+TEMPLATE vs CANDIDATE PROFILE (overrides every other rule)
+- The RESUME PARAGRAPHS are a FORMAT TEMPLATE. Their wording is placeholder text that only shows the layout and the role of each slot (title, summary, skills line, role line, bullet, project title, education). NEVER treat the template's skills, tools or bullet content as the candidate's experience, and never copy its bullets.
+- Keep verbatim from the template: the candidate's name, contact details, company names, locations, dates, education and section headings.
+- The CANDIDATE PROFILE in the user message is the ONLY record of what is true about the candidate: their real skills, tools, work and projects. The JOB DESCRIPTION decides what to emphasize; it is NOT evidence that the candidate has a skill.
+
+SOURCE OF TRUTH
+- A claim is SUPPORTED when the CANDIDATE PROFILE states it, or when it is a direct, narrower or adjacent version of something the profile states (e.g. the profile shows PostgreSQL schema work, so "SQL query tuning on PostgreSQL" is supported).
+- Match the JD as closely as the profile allows: for every supported JD skill, use the JD's exact wording, casing and acronyms, and write specific bullets for it.
+- When only a narrower/adjacent version is supported, write that honest version using the JD's terms where they are accurate (e.g. JD asks for Azure AI Search, profile shows Elasticsearch-based retrieval: write the retrieval work with Elasticsearch, and flag Azure AI Search).
+- When a JD skill has no basis in the profile, do NOT write it into the summary, skills, experience or project, and do NOT invent experience. Add one short entry to "flags" instead, e.g. "Kafka (core): not in the profile, left out" or "Terraform (supporting): only general cloud deployment in the profile, wrote that instead".
+- "flags": short plain-text strings, ONE entry per skill (never two entries about the same skill), max 8. Use [] when nothing was left out or narrowed.
+- Spread the profile's experience across the template's companies in a believable way: the most recent company takes the deeper, more senior work; never claim the same specific accomplishment at both companies.
 
 =====================================================================
 METHOD (do steps 1-4 silently before writing anything)
 
 Step 1 — Requirements source: read ONLY the JD's responsibilities and requirements sections ("What You'll Do", "What We're Looking For", "Requirements", "Qualifications" and similar). Ignore company overview, mission, benefits, perks and culture text; they contain no skills.
 
-Step 2 — Split compound requirements: every "X and Y", "X/Y", "X, Y, and Z" becomes separate individual skills, each judged and written on its own (e.g. "Redis, Elasticsearch, and Kafka" is three skills). Never treat a compound as one requirement. EXCEPTION: for interchangeable option lists ("React, Vue, Angular, etc.", "PostgreSQL or MySQL", "AWS/GCP/Azure") pick EXACTLY ONE option — the one the original resume supports, otherwise the first listed — and use only that one everywhere.
+Step 2 — Split compound requirements: every "X and Y", "X/Y", "X, Y, and Z" becomes separate individual skills, each judged and written on its own (e.g. "Redis, Elasticsearch, and Kafka" is three skills). Never treat a compound as one requirement. EXCEPTION: for interchangeable option lists ("React, Vue, Angular, etc.", "PostgreSQL or MySQL", "AWS/GCP/Azure") pick EXACTLY ONE option — the one the CANDIDATE PROFILE supports, otherwise the first listed — and use only that one everywhere.
 
 Step 3 — Core vs supporting:
 - CORE skill: stated as required or expert-level, repeated in several parts of the JD, or clearly the reason the role exists. Usually only 3-5 skills are core.
@@ -79,7 +86,7 @@ Keep it to 5-6 sentences and roughly 90-125 words. No filler such as "highly mot
 Skills rules for paragraphs matching "<Category>: <items>":
 - EXACTLY SIX CATEGORIES, chosen for this job. Rename the template labels when needed.
 - Category 1 or 2 always leads with the single most important core skill.
-- Every item listed must be backed by a bullet later in the resume or by the original resume — nothing listed on faith.
+- Every item listed must be backed by the CANDIDATE PROFILE — nothing listed on faith.
 - Supporting skills get a line but do not dominate space.
 - Output exactly "**Category:** item1, item2, item3", 4-7 items per category, ordered by JD priority, using the JD's exact casing ("Datadog", "GitLab CI/CD").
 - Split compound skills: "React + TypeScript" -> React, TypeScript; "Node.js/Express" -> Node.js, Express. Never keep +, /, &, "and", or "with" joiners. Each item is 1-3 words, no descriptions/parentheticals.
@@ -126,7 +133,7 @@ Relevant Project rules (exactly one project, placed after Education):
 FINAL CHECK — re-read every line and fix before returning:
 1. Does every core skill have several strong, standalone bullets across both companies and the project?
 2. Does every bullet prove exactly ONE sub-point of ONE skill, with no blended tool lists?
-3. Is anything claimed that the original resume does not support? Remove it and add a flag instead.
+3. Is anything claimed that the CANDIDATE PROFILE does not support? Remove it and add a flag instead. Is anything left over from the template's placeholder bullets? Replace it.
 4. Are the bullet counts right (14 per company, project as in the template), no section skipped, no bold bullet openers, bolding only on technology/system names?
 5. Does any line contain a banned filler word — seamless, comprehensive, robust, end-to-end, leveraging, leveraged, utilizing, utilized, cutting-edge, best practices, dynamic environments? Rewrite it.
 6. Does every bullet start with a capitalized past-tense verb and end with a full stop?
@@ -215,7 +222,8 @@ async function requestRewrite(
   jobDescription: string,
   apiKey: string,
   extraInstruction: string,
-  /** Full original resume, sent on retry passes so the model still sees the source of truth. */
+  candidateProfile: string,
+  /** Full template, sent on retry passes so the model still sees the layout. */
   fullResume?: Array<{ i: number; t: string }>,
 ): Promise<{ items: Array<{ i: number; t: string }>; flags: string[] }> {
   const VERB_POOL = [
@@ -244,24 +252,21 @@ async function requestRewrite(
   const boldMode = BOLD_MODES[Math.floor(Math.random() * BOLD_MODES.length)];
 
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4.1-mini",
-      service_tier: "priority",
-      messages: [
+  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  const reasoning = /^(o\d|gpt-5)/i.test(model);
+  const body: Record<string, unknown> = {
+    model,
+    messages: [
         { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
           content:
             "JOB DESCRIPTION:\n" +
             jobDescription +
+            "\n\nCANDIDATE PROFILE (the only source of truth about the candidate):\n" +
+            candidateProfile +
             (fullResume
-              ? "\n\nFULL ORIGINAL RESUME (source of truth, for reference only — do not return these):\n" +
+              ? "\n\nFULL TEMPLATE (layout reference only — do not return these):\n" +
                 JSON.stringify({ items: fullResume })
               : "") +
             "\n\nRESUME PARAGRAPHS:\n" +
@@ -273,16 +278,30 @@ async function requestRewrite(
             `PREFERRED VERB ORDER (use roughly in this order, never repeat): ${shuffled.join(", ")}\n` +
             "You MUST return one item for EVERY input index — never omit any index. " +
             extraInstruction +
-            "The first experience bullet MUST begin with the REQUIRED FIRST VERB. Apply the STYLE PROFILE and BOLD DISTRIBUTION MODE so this resume reads and looks different from every previous generation. ZERO-REPEAT: no sentence or 6-word sequence may be reused within this resume or match a line you would write for a generic role — rewrite anything that feels reusable. Never open bullets with \"Engineered\" or \"Designed and implemented\" unless listed above. Emphasis follows the JD's core skills; every claim must be supported by the original resume, and unsupported JD skills go into the flags list instead of the resume. FINAL CHECK BEFORE RESPONDING: confirm each core skill has several standalone bullets across both companies and the project, each bullet proves one skill, nothing unsupported is claimed; then scan your own output for any two lines sharing an opening clause or a repeated bolded phrase and rewrite them.",
+            "The first experience bullet MUST begin with the REQUIRED FIRST VERB. Apply the STYLE PROFILE and BOLD DISTRIBUTION MODE so this resume reads and looks different from every previous generation. ZERO-REPEAT: no sentence or 6-word sequence may be reused within this resume or match a line you would write for a generic role — rewrite anything that feels reusable. Never open bullets with \"Engineered\" or \"Designed and implemented\" unless listed above. Emphasis follows the JD's core skills; every claim must be supported by the CANDIDATE PROFILE, and unsupported JD skills go into the flags list instead of the resume. FINAL CHECK BEFORE RESPONDING: confirm each core skill has several standalone bullets across both companies and the project, each bullet proves one skill, nothing unsupported is claimed; then scan your own output for any two lines sharing an opening clause or a repeated bolded phrase and rewrite them.",
         },
       ],
+    response_format: { type: "json_object" },
+  };
+  if (reasoning) {
+    body.max_completion_tokens = 32000;
+  } else {
+    Object.assign(body, {
       max_tokens: 32000,
-      temperature: 0.85,
+      temperature: 0.7,
       top_p: 0.95,
-      frequency_penalty: 0.6,
-      presence_penalty: 0.4,
-      response_format: { type: "json_object" },
-    }),
+      frequency_penalty: 0.4,
+      presence_penalty: 0.3,
+    });
+  }
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -304,9 +323,26 @@ async function requestRewrite(
   };
 }
 
+// Default model. Override in Vercel with the OPENAI_MODEL environment variable.
+const DEFAULT_MODEL = "gpt-4.1";
+
+function dedupeFlags(flags: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const f of flags) {
+    const key = f.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out.slice(0, 8);
+}
+
 async function callLovableAi(
   paragraphs: string[],
   jobDescription: string,
+  isList: boolean[],
+  candidateProfile: string,
   flagsOut: string[],
 ): Promise<string[]> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -321,9 +357,9 @@ async function callLovableAi(
   const result = paragraphs.slice();
   const filled = new Set<number>();
 
-  const apply = (out: { items: Array<{ i: number; t: string }>; flags: string[] }) => {
-    for (const f of out.flags) if (!flagsOut.includes(f)) flagsOut.push(f);
+  const apply = (out: { items: Array<{ i: number; t: string }> }, only?: Set<number>) => {
     for (const it of out.items) {
+      if (only && !only.has(it.i)) continue;
       if (it.i >= 0 && it.i < result.length && it.t.trim().length > 0) {
         result[it.i] = it.t;
         filled.add(it.i);
@@ -331,10 +367,12 @@ async function callLovableAi(
     }
   };
 
-  apply(await requestRewrite(items, jobDescription, apiKey, ""));
+  // Pass 1 — full resume. Only this pass's flags are kept (retry passes rephrase them).
+  const first = await requestRewrite(items, jobDescription, apiKey, "", candidateProfile);
+  apply(first);
+  flagsOut.push(...dedupeFlags(first.flags));
 
-  // Second pass: re-request any indices the model silently skipped, instead of
-  // falling back to the original template boilerplate.
+  // Pass 2 — re-request any indices the model silently skipped.
   for (let attempt = 0; attempt < 2; attempt++) {
     const missing = items.filter((x) => !filled.has(x.i));
     if (missing.length === 0) break;
@@ -344,12 +382,43 @@ async function callLovableAi(
           missing,
           jobDescription,
           apiKey,
-          "These are the ONLY remaining paragraphs from the same resume; they were skipped previously. Rewrite each one following the method and the source of truth, keeping each paragraph's original role (header, bullet, skills line, project title). Do not return template boilerplate. ",
+          "These are the ONLY remaining paragraphs from the same resume; they were skipped previously. Rewrite each one following the method and the CANDIDATE PROFILE, keeping each paragraph's original role (header, bullet, skills line, project title). Do not return template placeholder text. ",
+          candidateProfile,
           items,
         ),
       );
     } catch {
       break;
+    }
+  }
+
+  // Pass 3 — quality repair: send back only the lines that broke a rule.
+  const problems = findProblems(result, paragraphs, isList);
+  if (problems.size > 0) {
+    const idx = new Set(problems.keys());
+    const usedVerbs = result
+      .filter((_, i) => isList[i] && !idx.has(i))
+      .map((t) => plain(t).split(/\s+/)[0])
+      .filter(Boolean);
+    const notes = Array.from(problems.entries())
+      .map(([i, msgs]) => `i=${i}: ${msgs.join("; ")}`)
+      .join("\n");
+    try {
+      apply(
+        await requestRewrite(
+          Array.from(idx).map((i) => ({ i, t: result[i] })),
+          jobDescription,
+          apiKey,
+          "QUALITY REPAIR: these paragraphs are your own draft and each broke a rule. Rewrite ONLY these, keeping the same skill and role for each, and fix every listed problem:\n" +
+            notes +
+            `\nOpening verbs already used elsewhere (do not reuse): ${usedVerbs.join(", ")}.\n`,
+          candidateProfile,
+          result.map((t, i) => ({ i, t })),
+        ),
+        idx,
+      );
+    } catch {
+      /* keep the first draft if the repair call fails */
     }
   }
 
@@ -372,20 +441,23 @@ export const generateResume = createServerFn({ method: "POST" })
     }
     // Vercel caps request bodies at 4.5 MB; base64 adds ~33%.
     if (input.templateBase64.length > 4_000_000) throw new Error("Template is too large (max ~3 MB).");
-    return { jobDescription: jd, templateBase64: input.templateBase64 };
+    const profile = typeof input.candidateProfile === "string" ? input.candidateProfile.trim() : "";
+    if (profile.length < 50) throw new Error("Add the candidate profile first (his real skills and experience).");
+    if (profile.length > 30000) throw new Error("Candidate profile is too long (max 30,000 characters).");
+    return { jobDescription: jd, templateBase64: input.templateBase64, candidateProfile: profile };
   })
   .handler(async ({ data }) => {
     const bytes = new Uint8Array(Buffer.from(data.templateBase64, "base64"));
 
     const flags: string[] = [];
-    const out = await rewriteDocx(bytes, data.jobDescription, (paragraphs, jd) =>
-      callLovableAi(paragraphs, jd, flags),
+    const out = await rewriteDocx(bytes, data.jobDescription, (paragraphs, jd, isList) =>
+      callLovableAi(paragraphs, jd, isList, data.candidateProfile, flags),
     );
 
     const base64 = Buffer.from(out).toString("base64");
     return {
       fileName: `Yathendra_Resume.docx`,
       base64,
-      flags: flags.slice(0, 10),
+      flags,
     };
   });

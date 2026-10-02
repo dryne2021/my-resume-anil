@@ -1,10 +1,10 @@
 # Dryne Agency — Resume Tailor
 
-Private one-user portal: upload a sample Word resume, paste a job description, download a tailored .docx in the same format.
+Private one-user portal: upload a Word resume for its format, paste the candidate's real profile and a job description, download a tailored .docx in the same format. Every claim comes from the profile; job skills the profile doesn't support are listed instead of invented.
 
 No database. Nothing is stored on the server:
 - Login is checked against the `OWNER_EMAIL` / `OWNER_PASSWORD` environment variables and kept in a signed cookie.
-- Your sample resume stays in your browser and is sent with each "Generate" request, then discarded.
+- The candidate profile (his real skills and experience) and the sample resume stay in your browser and is sent with each "Generate" request, then discarded.
 - The generated resume is returned straight to your browser for download.
 
 ## Deploy on Vercel
@@ -15,6 +15,7 @@ No database. Nothing is stored on the server:
    - `OWNER_EMAIL` — the email you log in with
    - `OWNER_PASSWORD` — the password you log in with
    - `SESSION_SECRET` — any long random string
+   - `OPENAI_MODEL` (optional) — defaults to `gpt-4.1`
 3. Redeploy.
 
 ## Run locally

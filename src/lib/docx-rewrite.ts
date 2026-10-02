@@ -203,7 +203,7 @@ function rewriteParagraphXml(block: string, newText: string): string {
 
 
 export interface AiRewriteFn {
-  (paragraphs: string[], jobDescription: string): Promise<string[]>;
+  (paragraphs: string[], jobDescription: string, isList: boolean[]): Promise<string[]>;
 }
 
 export async function rewriteDocx(
@@ -222,7 +222,11 @@ export async function rewriteDocx(
   const paragraphs = blocks.map((b) => b.text);
 
 
-  const rewritten = await aiRewrite(paragraphs, jobDescription);
+  const rewritten = await aiRewrite(
+    paragraphs,
+    jobDescription,
+    blocks.map((b) => b.isList),
+  );
   if (rewritten.length !== paragraphs.length) {
     throw new Error(
       `AI returned ${rewritten.length} paragraphs but template has ${paragraphs.length}.`,

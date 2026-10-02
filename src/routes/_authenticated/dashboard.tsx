@@ -26,6 +26,24 @@ interface StoredTemplate {
 // The template is remembered only in this browser (localStorage) so you don't
 // have to re-upload it. Nothing is saved on the server.
 const TEMPLATE_KEY = "dryne_template_v1";
+const PROFILE_KEY = "dryne_profile_v1";
+const PROFILE_MIN = 50;
+
+function loadProfile(): string {
+  try {
+    return localStorage.getItem(PROFILE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveProfile(v: string) {
+  try {
+    localStorage.setItem(PROFILE_KEY, v);
+  } catch {
+    /* storage unavailable — profile stays in memory for this visit */
+  }
+}
 
 function loadTemplate(): StoredTemplate | null {
   try {
@@ -66,6 +84,8 @@ function Dashboard() {
   const [loadingTpl, setLoadingTpl] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [jd, setJd] = useState("");
+  const [profile, setProfile] = useState("");
+  const profileReady = profile.trim().length >= PROFILE_MIN;
   const [busy, setBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [result, setResult] = useState<{ fileName: string; base64: string; flags?: string[] } | null>(null);
@@ -73,6 +93,7 @@ function Dashboard() {
 
   useEffect(() => {
     setTemplate(loadTemplate());
+    setProfile(loadProfile());
     setLoadingTpl(false);
   }, []);
 
@@ -109,6 +130,10 @@ function Dashboard() {
   };
 
   const handleGenerate = async () => {
+    if (!profileReady) {
+      toast.error("Add the candidate profile first");
+      return;
+    }
     if (!template) {
       toast.error("Upload your master template first");
       return;
@@ -121,7 +146,7 @@ function Dashboard() {
     setResult(null);
     try {
       const res = await generate({
-        data: { jobDescription: jd, templateBase64: template.base64 },
+        data: { jobDescription: jd, templateBase64: template.base64, candidateProfile: profile },
       });
       const base = template.file_name.replace(/\.docx$/i, "");
       setResult({ ...res, fileName: `${base}_tailored.docx` });
@@ -225,7 +250,7 @@ function Dashboard() {
               <p className="text-[10px] uppercase tracking-[0.25em] text-gold">Step 01</p>
               <h3 className="text-2xl font-display mt-1">Master Template</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Remembered in this browser only. Nothing is saved on a server.
+                Used for layout and format only, not as his experience. Remembered in this browser only.
               </p>
             </div>
             <input
@@ -284,9 +309,34 @@ function Dashboard() {
           </div>
         </section>
 
-        {/* Step 2: JD + Generate */}
+        {/* Step 2: Candidate profile */}
         <section className="rounded-xl border border-border bg-card/60 p-6">
           <p className="text-[10px] uppercase tracking-[0.25em] text-gold">Step 02</p>
+          <h3 className="text-2xl font-display mt-1">Candidate Profile</h3>
+          <p className="text-sm text-muted-foreground mt-1">
+            His real skills, tools, work at each company, projects and courses. Rough notes are
+            fine. This is the only source the resume is written from. Saved in this browser as you
+            type.
+          </p>
+          <Textarea
+            value={profile}
+            onChange={(e) => {
+              setProfile(e.target.value);
+              saveProfile(e.target.value);
+            }}
+            placeholder={"Skills: Python, Go, AWS (Lambda, ECS), PostgreSQL, OpenAI API, LangChain…\nCisco (Aug 2024–Present): built …\nVivma (Jul 2020–Dec 2022): built …\nProjects / courses: …"}
+            rows={10}
+            className="mt-5 bg-background/40 resize-y min-h-[220px] font-sans text-sm"
+          />
+          <p className="mt-2 text-xs text-muted-foreground">
+            {profile.trim().length.toLocaleString()} characters
+            {!profileReady && " · add at least a few lines"}
+          </p>
+        </section>
+
+        {/* Step 3: JD + Generate */}
+        <section className="rounded-xl border border-border bg-card/60 p-6">
+          <p className="text-[10px] uppercase tracking-[0.25em] text-gold">Step 03</p>
           <h3 className="text-2xl font-display mt-1">Job Description</h3>
           <p className="text-sm text-muted-foreground mt-1">
             Paste the full posting. Personal details, dates, schools, and companies stay intact.
@@ -303,14 +353,16 @@ function Dashboard() {
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <Button
               onClick={handleGenerate}
-              disabled={busy || !template}
+              disabled={busy || !template || !profileReady}
               className="bg-gold-gradient text-primary-foreground hover:opacity-90"
             >
               <Sparkles className="w-4 h-4 mr-2" />
               {busy ? "Generating…" : "Generate Resume"}
             </Button>
-            {!template && (
-              <span className="text-xs text-muted-foreground">Upload a template first.</span>
+            {(!template || !profileReady) && (
+              <span className="text-xs text-muted-foreground">
+                {!template ? "Upload a template first." : "Add the candidate profile first."}
+              </span>
             )}
           </div>
         </section>
@@ -328,7 +380,7 @@ function Dashboard() {
               <div className="mt-5 rounded-lg border border-border bg-background/40 p-4">
                 <p className="flex items-center gap-2 text-sm font-medium">
                   <AlertTriangle className="w-4 h-4 text-gold" />
-                  Left out or narrowed — not supported by your template
+                  Left out or narrowed — not in the candidate profile
                 </p>
                 <ul className="mt-2 space-y-1 text-sm text-muted-foreground list-disc pl-5">
                   {result.flags.map((f) => (
@@ -336,7 +388,7 @@ function Dashboard() {
                   ))}
                 </ul>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  If any of these are real experience, add them to your master template and generate again.
+                  If any of these are real experience, add them to the candidate profile and generate again.
                 </p>
               </div>
             )}
