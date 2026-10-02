@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { Upload, FileText, Sparkles, Download, LogOut, Check, Trash2 } from "lucide-react";
+import { Upload, FileText, Sparkles, Download, LogOut, Check, Trash2, AlertTriangle } from "lucide-react";
 
 import { logout } from "@/lib/auth.functions";
 import { generateResume } from "@/lib/generate-resume.functions";
@@ -68,7 +68,7 @@ function Dashboard() {
   const [jd, setJd] = useState("");
   const [busy, setBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
-  const [result, setResult] = useState<{ fileName: string; base64: string } | null>(null);
+  const [result, setResult] = useState<{ fileName: string; base64: string; flags?: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -324,6 +324,22 @@ function Dashboard() {
               Your tailored resume is ready — same layout, fonts, and structure as your uploaded
               template.
             </p>
+            {result.flags && result.flags.length > 0 && (
+              <div className="mt-5 rounded-lg border border-border bg-background/40 p-4">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  <AlertTriangle className="w-4 h-4 text-gold" />
+                  Left out or narrowed — not supported by your template
+                </p>
+                <ul className="mt-2 space-y-1 text-sm text-muted-foreground list-disc pl-5">
+                  {result.flags.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  If any of these are real experience, add them to your master template and generate again.
+                </p>
+              </div>
+            )}
             <div className="mt-5 flex flex-wrap gap-3">
               <Button
                 onClick={handleDownloadDocx}
