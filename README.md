@@ -15,7 +15,7 @@ No database. Nothing is stored on the server:
    - `OWNER_EMAIL` — the email you log in with
    - `OWNER_PASSWORD` — the password you log in with
    - `SESSION_SECRET` — any long random string
-   - `OPENAI_MODEL` (optional) — defaults to `gpt-4.1`
+   - `OPENAI_MODEL` (optional) — defaults to `gpt-4.1-mini`
 3. Redeploy.
 
 ## Run locally

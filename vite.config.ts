@@ -12,4 +12,11 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // Resume generation calls OpenAI for up to a couple of minutes; give the
+  // Vercel function the full 300 s instead of the default limit.
+  // The Lovable config's type only lists a few Nitro keys, but it passes the
+  // whole object through to Nitro, which understands \`vercel\`.
+  nitro: {
+    vercel: { functions: { maxDuration: 300 } },
+  } as Record<string, unknown>,
 });

@@ -66,6 +66,15 @@ function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [jd, setJd] = useState("");
   const [busy, setBusy] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!busy) return;
+    setElapsed(0);
+    const started = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [busy]);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [result, setResult] = useState<{ fileName: string; base64: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -306,10 +315,17 @@ function Dashboard() {
               className="bg-gold-gradient text-primary-foreground hover:opacity-90"
             >
               <Sparkles className="w-4 h-4 mr-2" />
-              {busy ? "Generating…" : "Generate Resume"}
+              {busy
+                ? `Generating… ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`
+                : "Generate Resume"}
             </Button>
             {!template && (
               <span className="text-xs text-muted-foreground">Upload a template first.</span>
+            )}
+            {busy && (
+              <span className="text-xs text-muted-foreground">
+                Usually takes 1–2 minutes. Keep this tab open.
+              </span>
             )}
           </div>
         </section>

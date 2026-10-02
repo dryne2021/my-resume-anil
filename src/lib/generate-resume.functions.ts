@@ -271,14 +271,29 @@ async function requestRewrite(
     });
   }
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  // "priority" makes OpenAI respond noticeably faster (at a higher price).
+  // Set OPENAI_SERVICE_TIER=default in Vercel to turn it off.
+  const tier = process.env.OPENAI_SERVICE_TIER ?? "priority";
+  if (tier && tier !== "default") body.service_tier = tier;
+
+  const send = () =>
+    fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+  let res = await send();
+  if (!res.ok && body.service_tier && res.status === 400) {
+    const text = await res.clone().text();
+    if (/service_tier/i.test(text)) {
+      delete body.service_tier; // model/account doesn't support it — retry at normal speed
+      res = await send();
+    }
+  }
 
   if (!res.ok) {
     const text = await res.text();
@@ -298,7 +313,7 @@ async function requestRewrite(
 }
 
 // Default model. Override in Vercel with the OPENAI_MODEL environment variable.
-const DEFAULT_MODEL = "gpt-4.1";
+const DEFAULT_MODEL = "gpt-4.1-mini";
 
 async function callLovableAi(
   paragraphs: string[],
