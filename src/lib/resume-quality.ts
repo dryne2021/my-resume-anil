@@ -9,6 +9,22 @@ const CONNECTORS = new Set(
 
 export const plain = (t: string) => t.replace(/\*\*/g, "").trim();
 
+export const BULLET_MIN_WORDS = 25;
+export const BULLET_MAX_WORDS = 42;
+export const SUMMARY_MIN_WORDS = 85;
+export const SUMMARY_MAX_WORDS = 130;
+
+/** Index of the summary paragraph: the first paragraph after a "SUMMARY" heading. */
+export function findSummaryIndex(originals: string[]): number {
+  const h = originals.findIndex((t) => /^\s*(professional\s+)?summary\s*:?\s*$/i.test(plain(t)));
+  if (h < 0) return -1;
+  for (let i = h + 1; i < originals.length; i++) if (plain(originals[i])) return i;
+  return -1;
+}
+
+const countSentences = (t: string) =>
+  (t.replace(/\b(?:e\.g|i\.e|etc|vs|Inc|Ltd|Jr|Sr)\./gi, "x").match(/[.!?](?=\s|$)/g) ?? []).length;
+
 /**
  * Server-side quality checks run on every generation. Returns problems keyed by
  * paragraph index so the bad lines can be sent back for one repair pass.
@@ -25,6 +41,7 @@ export function findProblems(
     problems.set(i, arr);
   };
   const seenVerbs = new Map<string, number>();
+  const summaryIdx = findSummaryIndex(originals);
 
   result.forEach((raw, i) => {
     const t = plain(raw);
@@ -32,6 +49,16 @@ export function findProblems(
 
     const banned = Array.from(new Set((t.match(BANNED_RE) ?? []).map((w) => w.toLowerCase())));
     if (banned.length) add(i, `remove the banned word(s): ${banned.join(", ")}`);
+
+    if (i === summaryIdx) {
+      const n = t.split(/\s+/).length;
+      const sentences = countSentences(t);
+      if (n < SUMMARY_MIN_WORDS || n > SUMMARY_MAX_WORDS)
+        add(i, `summary is ${n} words; write 5-6 sentences totalling 90-125 words`);
+      else if (sentences < 5 || sentences > 6)
+        add(i, `summary has ${sentences} sentences; write exactly 5-6 sentences (90-125 words)`);
+      return;
+    }
 
     if (!isList[i]) return; // the remaining rules are for bullets only
 
@@ -53,8 +80,9 @@ export function findProblems(
 
     const commas = (t.match(/,/g) ?? []).length;
     if (commas >= 4) add(i, "lists too many tools or items; make it prove ONE skill with one concrete mechanism");
-    if (words.length > 42) add(i, `too long (${words.length} words); keep it to 30-38 words`);
-    if (words.length < 18) add(i, `too short (${words.length} words); add the mechanism and why it mattered`);
+    if (words.length > BULLET_MAX_WORDS) add(i, `too long (${words.length} words); keep it to 30-38 words`);
+    if (words.length < BULLET_MIN_WORDS)
+      add(i, `too short (${words.length} words); expand to 30-38 words by adding the concrete mechanism and why it mattered, so it spans about two lines`);
   });
   return problems;
 }

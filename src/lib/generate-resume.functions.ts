@@ -25,6 +25,8 @@ TEMPLATE vs JOB DESCRIPTION (overrides every other rule)
 - The RESUME PARAGRAPHS are a FORMAT TEMPLATE. Their wording is placeholder text that only shows the layout and the role of each slot (title, summary, skills line, role line, bullet, project title, education). Never reuse the template's skills, tools or bullet content, and never copy its bullets.
 - Keep verbatim from the template: the candidate's name, contact details, company names, locations, dates, education and section headings.
 - The candidate reviews every job before applying and has confirmed he has the skills it requires. The JOB DESCRIPTION is therefore the source of his skills: build the summary, skills, experience and project from the JD's requirements, using the JD's exact wording, casing and acronyms.
+- TOOL COVERAGE (mandatory): build a list of every named tool, platform and product in the JD (e.g. from "Key Technologies", "Requirements", "Tech stack"), splitting compounds ("Azure Dev Ops, Git Hub, Git Hub Copilot" -> Azure DevOps, GitHub, GitHub Copilot; "Foundry, Azure Databricks, AI Search" -> Azure AI Foundry, Azure Databricks, Azure AI Search). EVERY tool on that list must appear in the Skills section AND in at least one experience or project bullet that shows real use of it. Use the full official name (Azure AI Foundry, Azure AI Search, GitHub Copilot).
+- TOOLS THE JD DOES NOT NAME: add one only when a bullet needs a concrete mechanism and the JD names nothing for that area, keep it to standard, low-key choices, and NEVER add a tool that competes with one the JD names (e.g. no GitLab CI/CD when the JD names Azure DevOps or GitHub; no Datadog/Prometheus when the JD names Azure tooling — use Azure Monitor / Application Insights style wording instead). Never put two competing tools in the resume for the same job.
 - Write concrete engineering work (what was built, the mechanism, the failure handled, why it mattered) for each JD skill. Do not invent numeric metrics, client names, product names or certifications; impact is described qualitatively.
 - Spread the work across the template's companies in a believable way: the most recent company takes the deeper, more senior work; never claim the same specific accomplishment at both companies.
 
@@ -73,7 +75,7 @@ Summary rules (one paragraph, no bullets), drafted only after the core skills ar
 3. the type of systems built that match this JD (data pipelines, OAuth/auth infrastructure, CI/CD platforms, whatever fits);
 4. production ownership and collaboration;
 5. an AI-native line about using Claude Code and Codex daily in the engineering workflow.
-Keep it to 5-6 sentences and roughly 90-125 words. No filler such as "highly motivated", "results-driven", "proven track record".
+Write EXACTLY 5-6 sentences totalling 90-125 words (count them). Name the JD's key tools by their full names (e.g. Azure AI Foundry, Azure Databricks, Azure AI Search) instead of generic phrases like "Azure AI tools". No filler such as "highly motivated", "results-driven", "proven track record".
 
 Skills rules for paragraphs matching "<Category>: <items>":
 - EXACTLY SIX CATEGORIES, chosen for this job. Rename the template labels when needed.
@@ -119,14 +121,15 @@ Relevant Project rules (exactly one project, placed after Education):
 - Role detection from ORIGINAL text:
   * If the original text is a short title-case phrase with no verb and no " • " separator (e.g. "Enterprise AI Search Platform") → this is a project TITLE. Rewrite to a JD-aligned project name (3-7 words, Title Case, no punctuation except spaces/&) and wrap the ENTIRE new text in ** so it renders bold, exactly like "**Enterprise AI Search & Knowledge Intelligence Platform**".
   * If the original text contains " • " separators joining short tech/tool tokens (e.g. "Python • FastAPI • React") → this is a TECH-STACK line. Rewrite as 4-7 JD-explicit techs joined by " • " and wrap the WHOLE line in **, e.g. "**Python • FastAPI • OpenAI • RAG • PostgreSQL**". Only produce this when the original was itself a tech-stack line — never invent one.
-  * If the original text is a full sentence describing an action/outcome → this is a BULLET. Rewrite as ONE clear, natural sentence of 22-28 words: action verb + concrete artifact + JD-specific tech + outcome. Bold at most 1-2 short technology or system names inline (e.g. "**Python**", "**PostgreSQL**"); never bold the opening verb, whole clauses, or trailing punctuation.
+  * If the original text is a full sentence describing an action/outcome → this is a BULLET. Rewrite as ONE clear, natural sentence of 28-36 words: action verb + concrete artifact + JD-specific tech + outcome. Bold at most 1-2 short technology or system names inline (e.g. "**Python**", "**PostgreSQL**"); never bold the opening verb, whole clauses, or trailing punctuation.
 
 
 FINAL CHECK — re-read every line and fix before returning:
 1. Does every core skill have several strong, standalone bullets across both companies and the project?
 2. Does every bullet prove exactly ONE sub-point of ONE skill, with no blended tool lists?
 3. Is every core and supporting JD skill covered somewhere? Is anything left over from the template's placeholder bullets, or any skill the JD never mentions? Replace it.
-4. Are the bullet counts right (14 per company, project as in the template), no section skipped, no bold bullet openers, bolding only on technology/system names?
+4. Are the bullet counts right (14 per company, project as in the template), no section skipped, no bold bullet openers, bolding only on technology/system names? Is every bullet 30-38 words (project bullets 28-36) and the summary 5-6 sentences / 90-125 words?
+4b. Does EVERY JD-named tool appear in Skills AND in at least one bullet? Is any tool present that the JD does not name and that competes with a JD tool? Fix it.
 5. Does any line contain a banned filler word — seamless, comprehensive, robust, end-to-end, leveraging, leveraged, utilizing, utilized, cutting-edge, best practices, dynamic environments? Rewrite it.
 6. Does every bullet start with a capitalized past-tense verb and end with a full stop?
 
@@ -365,8 +368,11 @@ async function callLovableAi(
   }
 
   // Pass 3 — quality repair: send back only the lines that broke a rule.
-  const problems = findProblems(result, paragraphs, isList);
-  if (problems.size > 0) {
+  // Up to two rounds; the second round catches anything the first fix broke
+  // (e.g. a repaired bullet that picked an opening verb already in use).
+  for (let round = 0; round < 2; round++) {
+    const problems = findProblems(result, paragraphs, isList);
+    if (problems.size === 0) break;
     const idx = new Set(problems.keys());
     const usedVerbs = result
       .filter((_, i) => isList[i] && !idx.has(i))
@@ -383,13 +389,13 @@ async function callLovableAi(
           apiKey,
           "QUALITY REPAIR: these paragraphs are your own draft and each broke a rule. Rewrite ONLY these, keeping the same skill and role for each, and fix every listed problem:\n" +
             notes +
-            `\nOpening verbs already used elsewhere (do not reuse): ${usedVerbs.join(", ")}.\n`,
+            `\nOpening verbs already used elsewhere (do not reuse, and do not repeat a verb between the rewritten lines): ${usedVerbs.join(", ")}.\n`,
           result.map((t, i) => ({ i, t })),
         ),
         idx,
       );
     } catch {
-      /* keep the first draft if the repair call fails */
+      break; // keep the current draft if a repair call fails
     }
   }
 
