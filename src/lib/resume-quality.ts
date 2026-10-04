@@ -86,3 +86,235 @@ export function findProblems(
   });
   return problems;
 }
+
+// ---------------------------------------------------------------------------
+// Structure helpers
+// ---------------------------------------------------------------------------
+
+export interface CoreSkill {
+  name: string;
+  match: string[];
+}
+
+/** Consecutive runs of bullet paragraphs, e.g. [company 1 bullets, company 2 bullets, project bullets]. */
+export function bulletGroups(isList: boolean[]): number[][] {
+  const groups: number[][] = [];
+  let cur: number[] = [];
+  isList.forEach((l, i) => {
+    if (l) cur.push(i);
+    else if (cur.length) {
+      groups.push(cur);
+      cur = [];
+    }
+  });
+  if (cur.length) groups.push(cur);
+  return groups;
+}
+
+const DATE_RANGE_RE =
+  /((?:19|20)\d{2})\s*[–—-]\s*(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*)?(Present|Current|Now|(?:19|20)\d{2})/i;
+
+/** End year of the company that owns the bullet group starting at `start` (9999 = present). */
+export function companyEndYear(paragraphs: string[], start: number): number | null {
+  for (let i = start - 1; i >= 0 && i >= start - 4; i--) {
+    const m = DATE_RANGE_RE.exec(plain(paragraphs[i] ?? ""));
+    if (m) return /^\d/.test(m[2]) ? Number(m[2]) : 9999;
+  }
+  return null;
+}
+
+// Public release years, used to stop tools appearing under companies that ended earlier.
+const TIMELINE: Array<[RegExp, number, string]> = [
+  [/\bAzure AI Foundry\b/i, 2024, "Azure AI Foundry"],
+  [/\bClaude Code\b/i, 2025, "Claude Code"],
+  [/\bCodex\b/i, 2025, "Codex"],
+  [/\bModel Context Protocol\b|\bMCP\b/, 2025, "MCP"],
+  [/\bLangGraph\b/i, 2024, "LangGraph"],
+  [/\bGemini\b/i, 2024, "Gemini"],
+  [/\bAzure AI Search\b/i, 2023, "Azure AI Search"],
+  [/\bAI Studio\b/i, 2023, "Azure AI Studio"],
+  [/\bAzure OpenAI\b/i, 2023, "Azure OpenAI"],
+  [/\bChatGPT\b/i, 2023, "ChatGPT"],
+  [/\bGPT-4/i, 2023, "GPT-4"],
+  [/\bLangChain\b/i, 2023, "LangChain"],
+  [/\bLlamaIndex\b/i, 2023, "LlamaIndex"],
+  [/\bBedrock\b/i, 2023, "Amazon Bedrock"],
+  [/\b(?:AI|LLM)[- ]agents?\b|\bagentic\b/i, 2023, "AI agents"],
+  [/(?<!GitHub )\bcopilots?\b/i, 2023, "AI copilots"],
+  [/\bGitHub Copilot\b/i, 2022, "GitHub Copilot"],
+  [/\bgenerative AI\b|\bGenAI\b/i, 2022, "generative AI"],
+  [/\bLLMs?\b|\blarge language models?\b/i, 2022, "LLMs"],
+];
+
+const METRIC_RE =
+  /(?:\d[\d,.]*\s?(?:%|x\b|×|ms\b|milliseconds|s\b|seconds?|minutes?|hours?|days?|weeks?|k\b|K\b|M\b|B\b|million|billion|TB\b|GB\b|requests|req\/s|rps\b|QPS\b|users|customers|services|microservices|teams|engineers|pipelines|models|endpoints|transactions|events|documents|records|agents|workflows|deployments|releases|tickets|incidents|clusters|nodes|applications|apps|APIs|\+))|\$\s?\d/i;
+
+const hasMetric = (t: string) => METRIC_RE.test(plain(t));
+
+const ANGLES =
+  "(1) core usage, (2) a harder or non-obvious use, (3) failure handling or edge cases, (4) an operational or production concern";
+
+/**
+ * Structure checks that need the whole resume: core-skill coverage, number counts
+ * and the timeline. Returns problems keyed by paragraph index.
+ */
+export function findStructureProblems(
+  result: string[],
+  isList: boolean[],
+  core: CoreSkill[],
+): Map<number, string[]> {
+  const problems = new Map<number, string[]>();
+  const add = (i: number, msg: string) => {
+    const arr = problems.get(i) ?? [];
+    arr.push(msg);
+    problems.set(i, arr);
+  };
+  const groups = bulletGroups(isList);
+  const companies = groups.filter((g) => g.length >= 6);
+  const top = core.slice(0, 3).filter((c) => c.match.length > 0);
+  const mentions = (i: number, c: CoreSkill) =>
+    c.match.some((m) => m && plain(result[i]).toLowerCase().includes(m.toLowerCase()));
+
+  // Timeline — every bullet group, using the dates of the company above it.
+  for (const g of groups) {
+    const end = companyEndYear(result, g[0]);
+    if (end === null || end === 9999) continue;
+    for (const i of g) {
+      for (const [re, year, label] of TIMELINE) {
+        if (year > end && re.test(plain(result[i]))) {
+          add(
+            i,
+            `mentions ${label} (released ${year}) but this company ended in ${end}; rewrite the same skill with the technology that existed then`,
+          );
+          break;
+        }
+      }
+    }
+  }
+
+  companies.forEach((g) => {
+    const end = companyEndYear(result, g[0]) ?? 9999;
+    const released = (name: string) => TIMELINE.find(([re]) => re.test(name))?.[1] ?? 0;
+    // Core-skill coverage: 4 bullets per top-3 core skill.
+    const used = new Set<number>();
+    for (const c of top) {
+      const hits = g.filter((i) => mentions(i, c));
+      hits.forEach((i) => used.add(i));
+      let missing = 4 - hits.length;
+      if (missing <= 0) continue;
+      const spare = g.filter((i) => !used.has(i) && !top.some((t) => mentions(i, t))).reverse();
+      for (const i of spare) {
+        if (missing <= 0) break;
+        // Keep at least two supporting-skill bullets per company.
+        const supporting = g.filter((j) => !used.has(j) && !top.some((t) => mentions(j, t)));
+        if (supporting.length <= 2) break;
+        used.add(i);
+        missing--;
+        const older = released(c.name) > end;
+        const label = older
+          ? `${c.name}, written with its period-correct equivalent because this company ended in ${end} (e.g. ${c.match.filter((m) => m.toLowerCase() !== c.name.toLowerCase()).join(" / ") || "the technology that existed then"})`
+          : c.name;
+        add(
+          i,
+          `rewrite this bullet to focus solely on ${label} (it needs 4 bullets in this company, one per angle: ${ANGLES}); pick an angle not already used by the other bullets on this skill and name the technology explicitly`,
+        );
+      }
+    }
+
+    // Numbers: 5-7 bullets per company with one concrete figure.
+    const withNum = g.filter((i) => hasMetric(result[i]));
+    if (withNum.length < 5) {
+      let need = 5 - withNum.length;
+      for (const i of g) {
+        if (need <= 0) break;
+        if (hasMetric(result[i]) || problems.has(i)) continue;
+        add(
+          i,
+          "end this bullet with ONE concrete, modest, believable number showing scale or impact (latency, volume, time saved, error rate, users), different in type from the other numbers",
+        );
+        need--;
+      }
+    } else if (withNum.length > 7) {
+      withNum.slice(7).forEach((i) => add(i, "remove the number from this bullet; describe the impact in words"));
+    }
+  });
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Last-resort fixes applied in code after the AI repair rounds.
+// ---------------------------------------------------------------------------
+
+const REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\ban end-to-end\b/gi, "a full"],
+  [/\bend-to-end\b/gi, "full"],
+  [/\bseamlessly\b/gi, "smoothly"],
+  [/\bseamless\b/gi, "smooth"],
+  [/\bcomprehensive\b/gi, "full"],
+  [/\brobust\b/gi, "reliable"],
+  [/\bleveraging\b/gi, "using"],
+  [/\bleveraged\b/gi, "used"],
+  [/\bleverages\b/gi, "uses"],
+  [/\bleverage\b/gi, "use"],
+  [/\butilizing\b/gi, "using"],
+  [/\butilized\b/gi, "used"],
+  [/\butilizes\b/gi, "uses"],
+  [/\butilize\b/gi, "use"],
+  [/\bcutting-edge\b/gi, "modern"],
+  [/\bbest practices\b/gi, "engineering standards"],
+  [/\bdynamic environments\b/gi, "changing environments"],
+  [/\bdynamic environment\b/gi, "changing environment"],
+  [/\bspearheaded\b/gi, "led"],
+  [/\bspearhead\b/gi, "lead"],
+  [/\brevolutionized\b/gi, "reworked"],
+  [/\brevolutionize\b/gi, "rework"],
+  [/\bresults-driven\s*/gi, ""],
+  [/\bproven track record\b/gi, "track record"],
+  [/\bhighly motivated\s*/gi, ""],
+];
+
+const keepCase = (orig: string, rep: string) =>
+  rep && orig[0] === orig[0].toUpperCase() ? rep[0].toUpperCase() + rep.slice(1) : rep;
+
+export function replaceBannedWords(t: string): string {
+  let out = t;
+  for (const [re, rep] of REPLACEMENTS) out = out.replace(re, (m) => keepCase(m, rep));
+  return out.replace(/ {2,}/g, " ");
+}
+
+const VERB_POOL = [
+  "Built", "Designed", "Developed", "Implemented", "Delivered", "Engineered", "Automated",
+  "Integrated", "Deployed", "Optimized", "Instrumented", "Modernized", "Migrated", "Refactored",
+  "Scaled", "Hardened", "Streamlined", "Launched", "Introduced", "Established", "Created",
+  "Configured", "Extended", "Shipped", "Standardized", "Consolidated", "Rebuilt", "Tuned",
+  "Secured", "Reduced", "Improved", "Accelerated", "Simplified", "Containerized", "Orchestrated",
+  "Authored", "Prototyped", "Productionized", "Diagnosed", "Resolved", "Validated", "Trained",
+  "Evaluated", "Expanded", "Upgraded", "Restructured", "Assembled", "Drove", "Owned", "Partnered",
+];
+
+/** Replaces banned words everywhere and swaps any repeated opening verb for an unused one. */
+export function autoFix(result: string[], originals: string[], isList: boolean[]): string[] {
+  const out = result.map((t, i) => (plain(t) && t !== originals[i] ? replaceBannedWords(t) : t));
+  const seen = new Set<string>();
+  const firstWord = (t: string) => (t.match(/^\s*(\*\*)?([A-Za-z-]+)/)?.[2] ?? "");
+  out.forEach((t, i) => {
+    if (isList[i]) seen.add(firstWord(t).toLowerCase());
+  });
+  const counted = new Set<string>();
+  out.forEach((t, i) => {
+    if (!isList[i]) return;
+    const w = firstWord(t);
+    const key = w.toLowerCase();
+    if (!key) return;
+    if (!counted.has(key)) {
+      counted.add(key);
+      return;
+    }
+    const replacement = VERB_POOL.find((v) => !seen.has(v.toLowerCase()));
+    if (!replacement) return;
+    seen.add(replacement.toLowerCase());
+    counted.add(replacement.toLowerCase());
+    out[i] = t.replace(w, replacement);
+  });
+  return out;
+}
