@@ -422,8 +422,12 @@ export async function rewriteDocx(
           !/,/.test(aiLabel);
         if (ok) label = aiLabel;
       }
-      if (items.length === 0) {
-        // AI blanked it — keep original verbatim rather than emit empty.
+      const headingLike =
+        /^(EXPERIENCE|EDUCATION|PROJECTS?|SUMMARY|SKILLS|PROFESSIONAL EXPERIENCE|WORK EXPERIENCE)$/i.test(
+          items.replace(/[.,;:\s]+$/, "").trim(),
+        );
+      if (items.length === 0 || headingLike) {
+        // AI blanked it or wrote a section heading — keep original verbatim rather than emit junk.
         rewritten[i] = orig;
       } else {
         rewritten[i] = `**${label}:** ${items}`;

@@ -141,7 +141,7 @@ const TIMELINE: Array<[RegExp, number, string]> = [
   [/\bBedrock\b/i, 2023, "Amazon Bedrock"],
   [/\b(?:AI|LLM)[- ]agents?\b|\bagentic\b/i, 2023, "AI agents"],
   [/(?<!GitHub )\bcopilots?\b/i, 2023, "AI copilots"],
-  [/\bGitHub Copilot\b/i, 2022, "GitHub Copilot"],
+  [/\bGitHub Copilot\b/i, 2023, "GitHub Copilot"],
   [/\bgenerative AI\b|\bGenAI\b/i, 2022, "generative AI"],
   [/\bLLMs?\b|\blarge language models?\b/i, 2022, "LLMs"],
 ];
@@ -158,10 +158,43 @@ const ANGLES =
  * Structure checks that need the whole resume: core-skill coverage, number counts
  * and the timeline. Returns problems keyed by paragraph index.
  */
+export interface StructureOptions {
+  /** Template paragraphs (used to locate the Skills section). */
+  originals?: string[];
+  /** Every tool the JD names; each must be in Skills and in a bullet. */
+  tools?: string[];
+  /** Hiring company and product names that must never appear. */
+  hiringNames?: string[];
+}
+
+const HEADING_WORD_RE = /^(experience|education|projects?|summary|skills|professional experience|work experience|certifications?)$/i;
+const SKILLS_LINE_RE = /^[A-Za-z][A-Za-z0-9 &\/+\-]{1,40}:\s*\S/;
+// "predating Azure AI Foundry", "before Azure AI Foundry's release" — needs a product name,
+// so ordinary phrases like "before public releases" are not flagged.
+const TIMING_TEXT_RE =
+  /\bpredat(?:e|ed|es|ing)\b|\b(?:before|prior to|ahead of)\s+(?:[A-Z][\w.+-]*\s?){1,4}(?:'s)?\s*(?:release|launch|adoption|availability|introduction)\b/;
+
+/** Indices of "Category: items" lines inside the template's SKILLS section. */
+export function skillsLineIndices(originals: string[], isList: boolean[]): number[] {
+  const start = originals.findIndex((t) => /^\s*(technical\s+|core\s+)?skills\s*:?\s*$/i.test(plain(t)));
+  if (start < 0) return [];
+  const out: number[] = [];
+  for (let i = start + 1; i < originals.length; i++) {
+    const t = plain(originals[i]);
+    if (!t) continue;
+    if (/^[A-Z][A-Z &\/-]{2,40}$/.test(t)) break; // next ALL-CAPS heading
+    if (!isList[i] && SKILLS_LINE_RE.test(t)) out.push(i);
+  }
+  return out;
+}
+
+const lc = (t: string) => plain(t).toLowerCase();
+
 export function findStructureProblems(
   result: string[],
   isList: boolean[],
   core: CoreSkill[],
+  opts: StructureOptions = {},
 ): Map<number, string[]> {
   const problems = new Map<number, string[]>();
   const add = (i: number, msg: string) => {
@@ -238,6 +271,75 @@ export function findStructureProblems(
       withNum.slice(7).forEach((i) => add(i, "remove the number from this bullet; describe the impact in words"));
     }
   });
+
+  const bullets = groups.flat();
+
+  // Bullet hygiene: no semicolon second clauses, no release-timing commentary.
+  for (const i of bullets) {
+    const t = plain(result[i]);
+    if (/;/.test(t)) add(i, "remove the semicolon; write ONE sentence");
+    if (TIMING_TEXT_RE.test(t)) add(i, "do not write about release dates or timing; just describe the work with the period-correct technology");
+  }
+
+  // Hiring company / product names and trademarks must never appear.
+  const banned = (opts.hiringNames ?? []).filter((n) => n.length > 2).map((n) => n.toLowerCase());
+  result.forEach((raw, i) => {
+    const t = lc(raw);
+    if (!t || (opts.originals && raw === opts.originals[i])) return;
+    const hit = banned.find((n) =>
+      new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(t),
+    );
+    if (hit || /[™®]/.test(raw)) {
+      add(
+        i,
+        `remove ${hit ? `"${hit}"` : "the trademarked product name"}: never mention the hiring company or its products; describe the work in this employer's own business instead`,
+      );
+    }
+  });
+
+  // Skills section: every line filled with real items; every JD tool present.
+  const skillIdx = opts.originals ? skillsLineIndices(opts.originals, isList) : [];
+  for (const i of skillIdx) {
+    const t = plain(result[i]);
+    const items = t.includes(":") ? t.slice(t.indexOf(":") + 1).trim() : "";
+    const parts = items.split(",").map((x) => x.trim()).filter(Boolean);
+    if (parts.length < 2 || parts.some((x) => HEADING_WORD_RE.test(x)) || /^[A-Z\s]+$/.test(items)) {
+      add(i, "this skills line is empty or contains a heading/placeholder; fill it with 3-6 items this JD needs, renaming the category if it does not fit the JD (e.g. 'Programming Languages')");
+    }
+  }
+  const tools = (opts.tools ?? []).filter((x) => x.length > 1);
+  if (tools.length && skillIdx.length) {
+    const skillsText = skillIdx.map((i) => lc(result[i])).join(" | ");
+    const missing = tools.filter((x) => !skillsText.includes(x.toLowerCase()));
+    if (missing.length) {
+      for (const i of skillIdx) {
+        add(i, `the Skills section is missing these JD tools: ${missing.join(", ")}; add each one to the most fitting skills line (rename a category that has no JD-relevant items), 3-6 items per line`);
+      }
+    }
+  }
+  if (tools.length && bullets.length) {
+    const projectGroups = groups.filter((g) => g.length < 6);
+    const coreMention = (i: number) => top.some((c) => mentions(i, c));
+    const candidates = [
+      ...projectGroups.flat(),
+      ...companies.flatMap((g) => g.filter((i) => !coreMention(i)).reverse()),
+    ];
+    const taken = new Set<number>();
+    for (const tool of tools) {
+      const key = tool.toLowerCase();
+      if (bullets.some((i) => lc(result[i]).includes(key))) continue;
+      const year = TIMELINE.find(([re]) => re.test(tool))?.[1] ?? 0;
+      const pick = candidates.find((i) => {
+        if (taken.has(i) || problems.has(i)) return false;
+        const g = groups.find((gg) => gg.includes(i));
+        const end = g ? (companyEndYear(result, g[0]) ?? 9999) : 9999;
+        return year <= end;
+      });
+      if (pick === undefined) continue;
+      taken.add(pick);
+      add(pick, `rewrite this bullet so it shows concrete, hands-on use of ${tool} as its subject (it is a JD tool with no bullet yet); keep it to that one skill`);
+    }
+  }
   return problems;
 }
 

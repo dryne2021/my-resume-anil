@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireOwner } from "./auth.functions";
 import { rewriteDocx } from "./docx-rewrite";
+import { chatJson } from "./openai";
+import { analyzeJob, analysisBlock } from "./jd-analysis";
 import {
   autoFix,
   findProblems,
@@ -17,7 +19,7 @@ interface GenerateInput {
 
 const SYSTEM_PROMPT = `You are an expert resume tailor. Input is a JOB DESCRIPTION plus JSON {"items":[{"i":index,"t":"paragraph"}]} from a Word resume FORMAT TEMPLATE.
 
-Return ONLY strict JSON {"core":[{"name":"Python","match":["Python"]}],"items":[{"i":sameIndex,"t":"rewritten"}]} with the same indices/count/order in "items". "core" lists the JD's top 3 core skills in priority order (Step 3); "match" gives the exact words a bullet about that skill will contain, including any older equivalent you use for earlier companies (e.g. {"name":"Azure AI Foundry","match":["Azure AI Foundry","Azure Machine Learning"]}). Never merge, split, reorder, add, or drop paragraphs. Return non-text separators, decorative lines, page numbers, contact info, names, company names, schools, degrees, locations, and dates verbatim. If unsure, return the paragraph verbatim.
+Return ONLY strict JSON {"core":[{"name":"Python","match":["Python"]}],"items":[{"i":sameIndex,"t":"rewritten"}]} with the same indices/count/order in "items". "core" lists the JD's top 3 core skills in priority order (Step 3) — when the user message contains a JD ANALYSIS block, copy its core skills exactly; "match" gives the exact words a bullet about that skill will contain, including any older equivalent you use for earlier companies (e.g. {"name":"Azure AI Foundry","match":["Azure AI Foundry","Azure Machine Learning"]}). Never merge, split, reorder, add, or drop paragraphs. Return non-text separators, decorative lines, page numbers, contact info, names, company names, schools, degrees, locations, and dates verbatim. If unsure, return the paragraph verbatim.
 
 Section-boundary lock (MANDATORY — violations corrupt the document):
 - ANY paragraph whose text is an ALL-CAPS single-line heading (e.g. "SUMMARY", "PROFESSIONAL SUMMARY", "TECHNICAL SKILLS", "PROFESSIONAL EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS") must be returned VERBATIM. Never write body/bullet/project content into an all-caps heading paragraph.
@@ -35,7 +37,11 @@ TEMPLATE vs JOB DESCRIPTION (overrides every other rule)
 - TOOLS THE JD DOES NOT NAME: add one only when a bullet needs a concrete mechanism and the JD names nothing for that area, keep it to standard, low-key choices, and NEVER add a tool that competes with one the JD names (e.g. no GitLab CI/CD when the JD names Azure DevOps or GitHub; no Datadog/Prometheus when the JD names Azure tooling — use Azure Monitor / Application Insights style wording instead). Never put two competing tools in the resume for the same job.
 - Write concrete engineering work (what was built, the mechanism, the failure handled, why it mattered) for each JD skill. Do not invent client names, product names or certifications.
 - Spread the work across the template's companies in a believable way: the most recent company takes the deeper, more senior work; never claim the same specific accomplishment at both companies.
-- TIMELINE LOCK (critical): a tool may only appear under a company whose dates overlap the years the tool existed. Read each company's dates from its role line. Approximate public release years: GitHub Copilot 2022; ChatGPT, GPT-4, Azure OpenAI Service, LangChain, LlamaIndex, Amazon Bedrock, Claude, generative AI agents/copilots, Azure AI Search (the name) 2023; Azure AI Studio 2023; Azure AI Foundry, LangGraph, Gemini 2024; Claude Code, OpenAI Codex (agent/CLI), Model Context Protocol (MCP) 2025. For a company that ended before a tool existed, write that skill with the foundational technology of that time instead (e.g. Azure Machine Learning, Azure Cognitive Search, Azure Databricks, classic ML/NLP models, scikit-learn, BERT-style transformers, Azure DevOps) — never the newer tool. Put LLM agents, copilots, Azure AI Foundry, GitHub Copilot, Claude Code and Codex only in companies active in or after their release year.
+- JD ANALYSIS: when the user message contains a JD ANALYSIS block, its core skills (and their order), tools and hiring-company names are FINAL. Use exactly those core skills for Step 5 and the TOOL COVERAGE list; never substitute other core skills.
+- EMPLOYER CONTEXT (critical): every bullet describes work done for THAT employer, inside that employer's own business. Cisco: networking equipment, routers/switches, IoT gateways, security, collaboration and cloud platforms. A software-services company such as Vivma: client applications, internal platforms and integrations. Keep the JD's skills, languages and tools, but never move the hiring company's industry, customers, devices or products into a past employer (e.g. no battery, energy-storage or grid work at Cisco); translate it to the employer's world instead (e.g. embedded Linux/RTOS firmware on Cisco IoT gateways; simulation tools for network hardware validation).
+- NEVER mention the hiring company, its products, brands or trademarks (anything with ™ or ®) anywhere in the resume.
+- Never write about release dates or timing ("before X was released", "predating X adoption") — just use the period-correct technology.
+- TIMELINE LOCK (critical): a tool may only appear under a company whose dates overlap the years the tool existed. Read each company's dates from its role line. Approximate public release years: GitHub Copilot (business use), ChatGPT, GPT-4, Azure OpenAI Service, LangChain, LlamaIndex, Amazon Bedrock, Claude, generative AI agents/copilots, Azure AI Search (the name) 2023; Azure AI Studio 2023; Azure AI Foundry, LangGraph, Gemini 2024; Claude Code, OpenAI Codex (agent/CLI), Model Context Protocol (MCP) 2025. For a company that ended before a tool existed, write that skill with the foundational technology of that time instead (e.g. Azure Machine Learning, Azure Cognitive Search, Azure Databricks, classic ML/NLP models, scikit-learn, BERT-style transformers, Azure DevOps) — never the newer tool. Put LLM agents, copilots, Azure AI Foundry, GitHub Copilot, Claude Code and Codex only in companies active in or after their release year.
 - AGENTIC SDLC TOOLING: when the JD names Claude Code, Codex or GitHub Copilot, each one gets its own bullet at the most recent company showing concrete engineering use (e.g. generating and reviewing test suites, refactoring services, writing infrastructure scripts under human review) — not just a mention in the summary.
 - ONE STACK PER PURPOSE: pick one monitoring/observability stack that matches the JD's cloud (Azure Monitor and Application Insights for Azure-focused JDs, CloudWatch for AWS, Cloud Monitoring for GCP, or exactly what the JD names) and use only that one across the whole resume; same for CI/CD and for container orchestration. Never mix competing tools.
 
@@ -90,6 +96,8 @@ Write EXACTLY 5-6 sentences totalling 90-125 words (count them). Name the JD's k
 Skills rules for paragraphs matching "<Category>: <items>":
 - EXACTLY SIX CATEGORIES, chosen for this job. Rename the template labels when needed.
 - Category 1 or 2 always leads with the single most important core skill.
+- When the JD names programming languages, one line is "Programming Languages" (or "Languages") listing them.
+- If a template category has no JD-relevant items, RENAME it to a category this JD needs. Never leave a category with placeholder text, a section heading (e.g. "EXPERIENCE"), or fewer than 3 items.
 - Every item listed must be backed by at least one bullet later in the resume.
 - Supporting skills get a line but do not dominate space.
 - Output exactly "**Category:** item1, item2, item3", 4-7 items per category, ordered by JD priority, using the JD's exact casing ("Datadog", "GitLab CI/CD").
@@ -101,6 +109,8 @@ Experience rules (two companies):
 - BULLET COUNT = 14 PER COMPANY: every company has 14 bullet slots — write one unique bullet per slot. If two input slots contain identical template text, still return two completely different bullets. Never blank, merge, transfer, add, or remove a bullet, and never output the same bullet text twice.
 - Weighting: per company, bullets 1-4 = core skill #1 (one angle each), bullets 5-8 = core skill #2, bullets 9-12 = core skill #3, bullets 13-14 = the most important supporting skills. Each core bullet names only its own core skill as the technology; do not mix two core skills in one bullet.
 - Order: keep the grouping above (core skill #1 first).
+- The core skill is the SUBJECT of its bullet — what was built, tested or run with it. A passing mention ("generated via GitHub Copilot", "scripted with Copilot") does not count.
+- No semicolons in bullets; one sentence only.
 - BULLET FORMULA: WHAT WAS BUILT + THE ONE TECHNOLOGY + TECHNICAL DEPTH (mechanism, data type, failure mode or scale) + WHY IT MATTERED. Example: "Built a PostgreSQL-backed job queue using row-level locking and SKIP LOCKED so concurrent workers could claim export jobs without double-processing during peak billing runs." Weak lines such as "Worked with Go and Kubernetes." are invalid.
 - When the JD emphasizes two languages, each gets its own bullets — never mention both superficially in one bullet.
 - WORDING STYLE: ONE clear sentence per bullet, 30-38 words, calm and concrete product/systems-engineering language — no hype, no two-sentence bullets. Every company bullet must contain enough meaningful detail to span approximately two rendered lines in the uploaded template. A bullet names what was built, the JD technologies used, technical depth, and why it mattered; it must READ NATURALLY, like a human engineer wrote it. Never shorten a bullet into a generic statement, chain four or five noun phrases together, or pad it with filler such as "comprehensive", "dynamic environments", "seamless", "end-to-end", "robust and scalable", "utilizing", "leveraging". Target voice:
@@ -236,6 +246,8 @@ async function requestRewrite(
   jobDescription: string,
   apiKey: string,
   extraInstruction: string,
+  /** JD ANALYSIS text block from step 0 ("" when analysis failed). */
+  analysis: string,
   /** Full template, sent on retry passes so the model still sees the layout. */
   fullResume?: Array<{ i: number; t: string }>,
 ): Promise<{ items: Array<{ i: number; t: string }>; core: CoreSkill[] }> {
@@ -265,17 +277,14 @@ async function requestRewrite(
   const boldMode = BOLD_MODES[Math.floor(Math.random() * BOLD_MODES.length)];
 
 
-  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
-  const reasoning = /^(o\d|gpt-5)/i.test(model);
-  const body: Record<string, unknown> = {
-    model,
-    messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content:
+  const content = await chatJson({
+    apiKey,
+    system: SYSTEM_PROMPT,
+    penalties: true,
+    user:
             "JOB DESCRIPTION:\n" +
             jobDescription +
+            analysis +
             (fullResume
               ? "\n\nFULL TEMPLATE (layout reference only — do not return these):\n" +
                 JSON.stringify({ items: fullResume })
@@ -290,52 +299,8 @@ async function requestRewrite(
             "You MUST return one item for EVERY input index — never omit any index. " +
             extraInstruction +
             "The first experience bullet MUST begin with the REQUIRED FIRST VERB. Apply the STYLE PROFILE and BOLD DISTRIBUTION MODE so this resume reads and looks different from every previous generation. ZERO-REPEAT: no sentence or 6-word sequence may be reused within this resume or match a line you would write for a generic role — rewrite anything that feels reusable. Never open bullets with \"Engineered\" or \"Designed and implemented\" unless listed above. Emphasis follows the JD's core skills, and every skill comes from the JD, never from the template's placeholder text. FINAL CHECK BEFORE RESPONDING: confirm each core skill has several standalone bullets across both companies and the project, each bullet proves one skill, no template placeholder content remains; then scan your own output for any two lines sharing an opening clause or a repeated bolded phrase and rewrite them.",
-        },
-      ],
-    response_format: { type: "json_object" },
-  };
-  if (reasoning) {
-    body.max_completion_tokens = 32000;
-  } else {
-    Object.assign(body, {
-      max_tokens: 32000,
-      temperature: 0.7,
-      top_p: 0.95,
-      frequency_penalty: 0.4,
-      presence_penalty: 0.3,
-    });
-  }
+  });
 
-  // "priority" makes OpenAI respond noticeably faster (at a higher price).
-  // Set OPENAI_SERVICE_TIER=default in Vercel to turn it off.
-  const tier = process.env.OPENAI_SERVICE_TIER ?? "priority";
-  if (tier && tier !== "default") body.service_tier = tier;
-
-  const send = () =>
-    fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-  let res = await send();
-  if (!res.ok && body.service_tier && res.status === 400) {
-    const text = await res.clone().text();
-    if (/service_tier/i.test(text)) {
-      delete body.service_tier; // model/account doesn't support it — retry at normal speed
-      res = await send();
-    }
-  }
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`OpenAI error ${res.status}: ${text}`);
-  }
-  const data = await res.json();
-  const content: string = data?.choices?.[0]?.message?.content ?? "";
   const parsed = parseLooseJson(content);
   const outItems = Array.isArray(parsed?.items)
     ? parsed.items
@@ -348,8 +313,6 @@ async function requestRewrite(
   };
 }
 
-// Default model. Override in Vercel with the OPENAI_MODEL environment variable.
-const DEFAULT_MODEL = "gpt-4.1-mini";
 
 async function callLovableAi(
   paragraphs: string[],
@@ -378,10 +341,19 @@ async function callLovableAi(
     }
   };
 
-  // Pass 1 — full resume. Its "core" list drives the coverage checks.
-  const first = await requestRewrite(items, jobDescription, apiKey, "");
+  // Pass 0 — short job analysis: core skills, tools, hiring-company names.
+  const jd = await analyzeJob(jobDescription, apiKey);
+  const analysis = analysisBlock(jd);
+
+  // Pass 1 — full resume.
+  const first = await requestRewrite(items, jobDescription, apiKey, "", analysis);
   apply(first);
-  const core = first.core;
+  const core = jd?.core.length ? jd.core : first.core;
+  const structureOpts = {
+    originals: paragraphs,
+    tools: jd?.tools ?? [],
+    hiringNames: jd?.hiringNames ?? [],
+  };
 
   // Pass 2 — re-request any indices the model silently skipped.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -394,6 +366,7 @@ async function callLovableAi(
           jobDescription,
           apiKey,
           "These are the ONLY remaining paragraphs from the same resume; they were skipped previously. Rewrite each one following the method and the JOB DESCRIPTION, keeping each paragraph's original role (header, bullet, skills line, project title). Do not return template placeholder text. ",
+          analysis,
           items,
         ),
       );
@@ -407,7 +380,7 @@ async function callLovableAi(
   // (e.g. a repaired bullet that picked an opening verb already in use).
   for (let round = 0; round < 2; round++) {
     const problems = findProblems(result, paragraphs, isList);
-    for (const [i, msgs] of findStructureProblems(result, isList, core)) {
+    for (const [i, msgs] of findStructureProblems(result, isList, core, structureOpts)) {
       problems.set(i, [...(problems.get(i) ?? []), ...msgs]);
     }
     if (problems.size === 0) break;
@@ -428,6 +401,7 @@ async function callLovableAi(
           "QUALITY REPAIR: these paragraphs are your own draft and each broke a rule. Rewrite ONLY these, keeping the same skill and role for each, and fix every listed problem:\n" +
             notes +
             `\nOpening verbs already used elsewhere (do not reuse, and do not repeat a verb between the rewritten lines): ${usedVerbs.join(", ")}.\n`,
+          analysis,
           result.map((t, i) => ({ i, t })),
         ),
         idx,
