@@ -214,9 +214,9 @@ export async function rewriteDocx(
   const zip = new PizZip(templateBytes);
   const docXmlFile = zip.file("word/document.xml");
   if (!docXmlFile) throw new Error("Invalid .docx: missing word/document.xml");
-  // BULLET COUNT LOCK — every experience company must expose 14 bullet
-  // slots. Templates that ship fewer get the last bullet paragraph cloned.
-  const originalXml = expandBulletGroups(docXmlFile.asText(), 14);
+  // BULLET COUNT follows the template exactly (a one-page template keeps its
+  // 7-8 bullets per company). Nothing is cloned or added.
+  const originalXml = docXmlFile.asText();
 
   const blocks = extractParagraphs(originalXml);
   const paragraphs = blocks.map((b) => b.text);
@@ -507,11 +507,14 @@ export async function rewriteDocx(
     // span about two rendered lines. Non-list paragraphs retain the tighter
     // template-relative limit. Trim at a sentence boundary first, then at a
     // word boundary, keeping bold markers balanced.
+    // Last-resort length cap relative to the template's own text, so the
+    // resume keeps the template's page count (e.g. stays on one page).
+    const origLen = stripBoldMarkers(orig).length;
     const budget = isListSlot
-      ? Math.max(300, Math.round(stripBoldMarkers(orig).length * 1.45))
+      ? Math.max(120, Math.round(origLen * 1.2))
       : inSummary
-        ? Math.max(850, Math.round(stripBoldMarkers(orig).length * 2.1))
-      : Math.max(200, Math.round(stripBoldMarkers(orig).length * 1.15));
+        ? Math.max(200, Math.round(origLen * 1.2))
+      : Math.max(80, Math.round(origLen * 1.15));
     if (stripBoldMarkers(body).length > budget) {
       const sentences = body.match(/[^.!?]+[.!?]+(\s|$)/g) ?? [];
       let acc = "";

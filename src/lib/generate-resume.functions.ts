@@ -3,6 +3,7 @@ import { requireOwner } from "./auth.functions";
 import { rewriteDocx } from "./docx-rewrite";
 import { chatJson } from "./openai";
 import { analyzeJob, analysisBlock } from "./jd-analysis";
+import { computeLayout, layoutPlanText } from "./resume-quality";
 import {
   autoFix,
   findProblems,
@@ -57,14 +58,14 @@ Step 3 — Core vs supporting:
 - SUPPORTING skill: mentioned once, softened ("familiarity with", "bonus", "preferred", "nice to have"), or clearly secondary to the main work.
 - This split decides the title, the summary, the skills order and where bullet weight goes.
 
-Step 4 — Four sub-points per core skill: for every core skill, plan 4 sub-points that test genuinely different angles, each independently checkable in an interview:
+Step 4 — Distinct sub-points per core skill: for every core skill, plan as many sub-points as it has bullets (up to 4), each testing a genuinely different angle, each independently checkable in an interview:
   1. core/basic usage
   2. a harder or non-obvious use case
   3. failure handling / edge cases
   4. operational or production-level concern
   Reject sub-points that reword the same idea.
 
-Step 5 — Weight toward core skills (critical): pick the JD's TOP 3 core skills (the "core" list). In EACH company, each of the 3 gets FOUR dedicated bullets — one per Step 4 angle — that focus on that skill ALONE and name it (or, for an older company, its period-correct equivalent from the TIMELINE LOCK). That is 12 core bullets per company; the remaining 2 bullets cover the most important supporting skills. Remaining core skills beyond the top 3 and other supporting skills go in the project and the Skills section. Example for a Python-core JD: four Python bullets per company — (1) Python services/APIs built, (2) a harder use such as asyncio concurrency or typed data models, (3) failure handling such as retries, validation and exception paths, (4) production concern such as profiling, packaging, testing in CI.
+Step 5 — Weight toward core skills (critical): use the JD's TOP 3 core skills (the "core" list). The LAYOUT PLAN in the user message says how many bullets each core skill gets in each company (it scales with the template's bullet count). Each of those bullets focuses on that skill ALONE, names it (or, for an older company, its period-correct equivalent from the TIMELINE LOCK) and uses a different Step 4 angle; the remaining bullets cover the most important supporting skills. Remaining core skills and other supporting skills go in the Skills section (and the project if the template has one). Example for a Python-core JD with 2 Python bullets per company: (1) Python services/APIs built, (2) failure handling such as retries, validation and exception paths; with 3-4 bullets add a harder use (asyncio, typed data models) and a production concern (profiling, packaging, CI tests).
 - DISTINCT ANGLES: never write two bullets with the same angle for the same skill, inside a company or across companies (e.g. three OAuth 2.0 token-validation bullets is invalid). The second company covers each core skill from different situations than the first.
 
 Step 6 — One bullet = one skill: each bullet proves exactly ONE sub-point of ONE skill with concrete specifics (data types, failure modes, scale, mechanisms) instead of vague verbs. Never blend several unrelated tools into one sentence to cover more keywords; that reads as stuffing and cannot be defended as one coherent claim.
@@ -72,7 +73,7 @@ Step 6 — One bullet = one skill: each bullet proves exactly ONE sub-point of O
 
 Bold rules: selective inline bolding on technology and system names only. In the PROFESSIONAL SUMMARY bold 2-3 core skill names. In skills lines bold the category prefix including the colon. In experience and project bullets bold at most 1-2 short technology or system names per bullet (1-4 words) — never the opening verb, never a whole clause, never metrics, never the same phrase twice in the resume. Never bold headings/contact/dates/company/school text.
 
-LENGTH LOCK: keep the same NUMBER OF PARAGRAPHS/LINES as the template — never add or remove lines. Each skills line must fit one line. Each experience bullet is ONE natural sentence of 30-38 words that reads easily, contains meaningful technical detail, and typically spans about two rendered lines in the uploaded template — never a run-on chain of clauses, never stacked buzzwords.
+LENGTH LOCK (critical — the resume must keep the template's page count, e.g. ONE page): keep the same NUMBER OF PARAGRAPHS/LINES as the template — never add or remove lines. Each bullet's word count stays within the LAYOUT PLAN range, i.e. about the length of the template bullet in the same slot; the summary follows the LAYOUT PLAN too. Each skills line must fit one line. Each bullet is ONE natural sentence with meaningful technical detail — never a run-on chain of clauses, never stacked buzzwords.
 
 Header/title rules:
 - Name, location, relocation/remote line and contact details stay exactly as in the template.
@@ -91,10 +92,10 @@ Summary rules (one paragraph, no bullets), drafted only after the core skills ar
 3. the type of systems built that match this JD (data pipelines, OAuth/auth infrastructure, CI/CD platforms, whatever fits);
 4. production ownership and collaboration;
 5. an AI-native line about using Claude Code and Codex daily in the engineering workflow.
-Write EXACTLY 5-6 sentences totalling 90-125 words (count them). Name the JD's key tools by their full names (e.g. Azure AI Foundry, Azure Databricks, Azure AI Search) instead of generic phrases like "Azure AI tools". No filler such as "highly motivated", "results-driven", "proven track record".
+Use the sentence and word counts in the LAYOUT PLAN (count them). Name the JD's key tools by their full names (e.g. Azure AI Foundry, Azure Databricks, Azure AI Search) instead of generic phrases like "Azure AI tools". No filler such as "highly motivated", "results-driven", "proven track record".
 
 Skills rules for paragraphs matching "<Category>: <items>":
-- EXACTLY SIX CATEGORIES, chosen for this job. Rename the template labels when needed.
+- EXACTLY as many category lines as the template has (see LAYOUT PLAN), chosen for this job. Rename the template labels when needed.
 - Category 1 or 2 always leads with the single most important core skill.
 - When the JD names programming languages, one line is "Programming Languages" (or "Languages") listing them.
 - If a template category has no JD-relevant items, RENAME it to a category this JD needs. Never leave a category with placeholder text, a section heading (e.g. "EXPERIENCE"), or fewer than 3 items.
@@ -106,14 +107,14 @@ Skills rules for paragraphs matching "<Category>: <items>":
 
 Experience rules (two companies):
 - Company names, locations and dates stay exactly as in the template. Only the role title text and the bullets are rewritten.
-- BULLET COUNT = 14 PER COMPANY: every company has 14 bullet slots — write one unique bullet per slot. If two input slots contain identical template text, still return two completely different bullets. Never blank, merge, transfer, add, or remove a bullet, and never output the same bullet text twice.
-- Weighting: per company, bullets 1-4 = core skill #1 (one angle each), bullets 5-8 = core skill #2, bullets 9-12 = core skill #3, bullets 13-14 = the most important supporting skills. Each core bullet names only its own core skill as the technology; do not mix two core skills in one bullet.
+- BULLET COUNT: every company keeps exactly the template's number of bullet slots (see LAYOUT PLAN) — write one unique bullet per slot. If two input slots contain identical template text, still return two completely different bullets. Never blank, merge, transfer, add, or remove a bullet, and never output the same bullet text twice.
+- Weighting: per company, follow the LAYOUT PLAN counts in order — first the bullets for core skill #1, then core skill #2, then core skill #3, then the supporting-skill bullets. Each core bullet names only its own core skill as the technology; do not mix two core skills in one bullet.
 - Order: keep the grouping above (core skill #1 first).
 - The core skill is the SUBJECT of its bullet — what was built, tested or run with it. A passing mention ("generated via GitHub Copilot", "scripted with Copilot") does not count.
 - No semicolons in bullets; one sentence only.
 - BULLET FORMULA: WHAT WAS BUILT + THE ONE TECHNOLOGY + TECHNICAL DEPTH (mechanism, data type, failure mode or scale) + WHY IT MATTERED. Example: "Built a PostgreSQL-backed job queue using row-level locking and SKIP LOCKED so concurrent workers could claim export jobs without double-processing during peak billing runs." Weak lines such as "Worked with Go and Kubernetes." are invalid.
 - When the JD emphasizes two languages, each gets its own bullets — never mention both superficially in one bullet.
-- WORDING STYLE: ONE clear sentence per bullet, 30-38 words, calm and concrete product/systems-engineering language — no hype, no two-sentence bullets. Every company bullet must contain enough meaningful detail to span approximately two rendered lines in the uploaded template. A bullet names what was built, the JD technologies used, technical depth, and why it mattered; it must READ NATURALLY, like a human engineer wrote it. Never shorten a bullet into a generic statement, chain four or five noun phrases together, or pad it with filler such as "comprehensive", "dynamic environments", "seamless", "end-to-end", "robust and scalable", "utilizing", "leveraging". Target voice:
+- WORDING STYLE: ONE clear sentence per bullet, at the LAYOUT PLAN length, calm and concrete product/systems-engineering language — no hype, no two-sentence bullets. A bullet names what was built, the JD technologies used, technical depth, and why it mattered; it must READ NATURALLY, like a human engineer wrote it. Never shorten a bullet into a generic statement, chain four or five noun phrases together, or pad it with filler such as "comprehensive", "dynamic environments", "seamless", "end-to-end", "robust and scalable", "utilizing", "leveraging". Target voice:
   * "Architected a high-concurrency agent runtime using Go and Python to coordinate model requests, tool execution, streaming events, and session state across distributed workers."
   * "Implemented resilient failure-handling patterns including circuit breakers, exponential backoff, dead-letter processing, dependency isolation, and controlled degradation under load."
   * "Deployed cloud-native services using AWS, Kubernetes, Docker, and Terraform, supporting horizontal scaling, rolling releases, readiness checks, and automated rollbacks."
@@ -127,7 +128,7 @@ Experience rules (two companies):
 - Never start with or include weak/filler phrases: responsible for, helped with, worked on, various, many, some, as needed, etc., leveraged, utilized, in order to, assisted, involved in, participated.
 - Every company's bullets are freshly written: no bullet repeats across companies, and no two companies share the same opening 4 words, the same verb, or the same ordering pattern.
 - SENTENCE COMPLETENESS: every bullet is a complete grammatical sentence ending in a full stop. Never end on a dangling word or preposition. Never begin any line with a quote mark, apostrophe, dash, bullet glyph or stray punctuation.
-- NUMBERS (required): in EACH company, 5-7 of the 14 bullets end with ONE concrete, believable number that shows scale or impact — e.g. "cutting p95 latency from 820 ms to 310 ms", "across 40+ microservices", "for 12,000 daily users", "reducing release time by 35%", "processing 2M documents per day". Rules: at most one number-based result per bullet; spread them across the core skills (not all on one skill); keep figures modest and specific (avoid round inflated claims like 99.99% or 10x); use different metric types (latency, throughput, volume, time saved, cost, error rate, adoption); never a number in the summary; project bullets may have at most 1 number in total. The remaining bullets describe impact qualitatively.
+- NUMBERS (required): in EACH company, the LAYOUT PLAN number of bullets end with ONE concrete, believable number that shows scale or impact — e.g. "cutting p95 latency from 820 ms to 310 ms", "across 40+ microservices", "for 12,000 daily users", "reducing release time by 35%", "processing 2M documents per day". Rules: write numbers as digits; at most one number-based result per bullet; spread them across the core skills (not all on one skill); keep figures modest and specific (avoid round inflated claims like 99.99% or 10x); use different metric types (latency, throughput, volume, time saved, cost, error rate, adoption); never a number in the summary; project bullets may have at most 1 number in total. The remaining bullets describe impact qualitatively.
 
 - Show ownership through architecture choices, code reviews, production incidents, trade-offs, reliability and user outcomes — only where supported.
 - ZERO-REPEAT LOCK (critical): no sentence, clause, or 6-word sequence may ever be reused — not within this resume, and not from any resume you have produced before. Every line must be composed fresh from THIS job description's own wording. If a line feels like something you'd naturally write for any backend/ML job, discard it and rewrite it using specifics unique to this JD (its exact systems, domain, constraints, tools, users). Every generation must read as an entirely different writer's voice.
@@ -141,16 +142,16 @@ Relevant Project rules (exactly one project, placed after Education):
 - Role detection from ORIGINAL text:
   * If the original text is a short title-case phrase with no verb and no " • " separator (e.g. "Enterprise AI Search Platform") → this is a project TITLE. Rewrite to a JD-aligned project name (3-7 words, Title Case, no punctuation except spaces/&) and wrap the ENTIRE new text in ** so it renders bold, exactly like "**Enterprise AI Search & Knowledge Intelligence Platform**".
   * If the original text contains " • " separators joining short tech/tool tokens (e.g. "Python • FastAPI • React") → this is a TECH-STACK line. Rewrite as 4-7 JD-explicit techs joined by " • " and wrap the WHOLE line in **, e.g. "**Python • FastAPI • OpenAI • RAG • PostgreSQL**". Only produce this when the original was itself a tech-stack line — never invent one.
-  * If the original text is a full sentence describing an action/outcome → this is a BULLET. Rewrite as ONE clear, natural sentence of 28-36 words: action verb + concrete artifact + JD-specific tech + outcome. Bold at most 1-2 short technology or system names inline (e.g. "**Python**", "**PostgreSQL**"); never bold the opening verb, whole clauses, or trailing punctuation.
+  * If the original text is a full sentence describing an action/outcome → this is a BULLET. Rewrite as ONE clear, natural sentence at the LAYOUT PLAN length (about the template bullet's own length): action verb + concrete artifact + JD-specific tech + outcome. Bold at most 1-2 short technology or system names inline (e.g. "**Python**", "**PostgreSQL**"); never bold the opening verb, whole clauses, or trailing punctuation.
 
 
 FINAL CHECK — re-read every line and fix before returning:
 1. Does every core skill have several strong, standalone bullets across both companies and the project?
 2. Does every bullet prove exactly ONE sub-point of ONE skill, with no blended tool lists?
 3. Is every core and supporting JD skill covered somewhere? Is anything left over from the template's placeholder bullets, or any skill the JD never mentions? Replace it.
-4. Are the bullet counts right (14 per company, project as in the template), no section skipped, no bold bullet openers, bolding only on technology/system names? Is every bullet 30-38 words (project bullets 28-36) and the summary 5-6 sentences / 90-125 words?
+4. Are the bullet counts right (exactly the template's slots per company, project as in the template), no section skipped, no bold bullet openers, bolding only on technology/system names? Is every bullet and the summary within the LAYOUT PLAN lengths, so the resume keeps the template's page count?
 4b. Does EVERY JD-named tool appear in Skills AND in at least one bullet? Is any tool present that the JD does not name and that competes with a JD tool? Fix it.
-4c. Does each company have exactly 4 bullets for each of the top 3 core skills, each a different angle, and 5-7 bullets with one number each? Does any tool appear under a company that ended before the tool existed? Fix it.
+4c. Does each company have the LAYOUT PLAN number of bullets for each of the top 3 core skills, each a different angle, and the planned number of bullets with one number each? Does any tool appear under a company that ended before the tool existed? Fix it.
 5. Does any line contain a banned filler word — seamless, comprehensive, robust, end-to-end, leveraging, leveraged, utilizing, utilized, cutting-edge, best practices, dynamic environments? Rewrite it.
 6. Does every bullet start with a capitalized past-tense verb and end with a full stop?
 
@@ -246,7 +247,7 @@ async function requestRewrite(
   jobDescription: string,
   apiKey: string,
   extraInstruction: string,
-  /** JD ANALYSIS text block from step 0 ("" when analysis failed). */
+  /** JD ANALYSIS + LAYOUT PLAN text blocks ("" when unavailable). */
   analysis: string,
   /** Full template, sent on retry passes so the model still sees the layout. */
   fullResume?: Array<{ i: number; t: string }>,
@@ -343,7 +344,8 @@ async function callLovableAi(
 
   // Pass 0 — short job analysis: core skills, tools, hiring-company names.
   const jd = await analyzeJob(jobDescription, apiKey);
-  const analysis = analysisBlock(jd);
+  const layout = computeLayout(paragraphs, isList);
+  const analysis = analysisBlock(jd) + layoutPlanText(layout, (jd?.core ?? []).map((c) => c.name));
 
   // Pass 1 — full resume.
   const first = await requestRewrite(items, jobDescription, apiKey, "", analysis);

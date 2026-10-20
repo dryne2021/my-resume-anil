@@ -9,10 +9,7 @@ const CONNECTORS = new Set(
 
 export const plain = (t: string) => t.replace(/\*\*/g, "").trim();
 
-export const BULLET_MIN_WORDS = 25;
-export const BULLET_MAX_WORDS = 42;
-export const SUMMARY_MIN_WORDS = 85;
-export const SUMMARY_MAX_WORDS = 130;
+export const wordCount = (t: string) => plain(t).split(/\s+/).filter(Boolean).length;
 
 /** Index of the summary paragraph: the first paragraph after a "SUMMARY" heading. */
 export function findSummaryIndex(originals: string[]): number {
@@ -41,7 +38,8 @@ export function findProblems(
     problems.set(i, arr);
   };
   const seenVerbs = new Map<string, number>();
-  const summaryIdx = findSummaryIndex(originals);
+  const layout = computeLayout(originals, isList);
+  const summaryIdx = layout.summaryIdx;
 
   result.forEach((raw, i) => {
     const t = plain(raw);
@@ -50,13 +48,14 @@ export function findProblems(
     const banned = Array.from(new Set((t.match(BANNED_RE) ?? []).map((w) => w.toLowerCase())));
     if (banned.length) add(i, `remove the banned word(s): ${banned.join(", ")}`);
 
-    if (i === summaryIdx) {
-      const n = t.split(/\s+/).length;
+    if (i === summaryIdx && layout.summary) {
+      const n = wordCount(t);
       const sentences = countSentences(t);
-      if (n < SUMMARY_MIN_WORDS || n > SUMMARY_MAX_WORDS)
-        add(i, `summary is ${n} words; write 5-6 sentences totalling 90-125 words`);
-      else if (sentences < 5 || sentences > 6)
-        add(i, `summary has ${sentences} sentences; write exactly 5-6 sentences (90-125 words)`);
+      const sw = layout.summary;
+      if (n < sw.minWords || n > sw.maxWords)
+        add(i, `summary is ${n} words; write ${sw.sentences} sentences totalling ${sw.minWords}-${sw.maxWords} words so the resume keeps the template's length`);
+      else if (Math.abs(sentences - sw.sentences) > 1)
+        add(i, `summary has ${sentences} sentences; write ${sw.sentences} sentences (${sw.minWords}-${sw.maxWords} words)`);
       return;
     }
 
@@ -80,9 +79,11 @@ export function findProblems(
 
     const commas = (t.match(/,/g) ?? []).length;
     if (commas >= 4) add(i, "lists too many tools or items; make it prove ONE skill with one concrete mechanism");
-    if (words.length > BULLET_MAX_WORDS) add(i, `too long (${words.length} words); keep it to 30-38 words`);
-    if (words.length < BULLET_MIN_WORDS)
-      add(i, `too short (${words.length} words); expand to 30-38 words by adding the concrete mechanism and why it mattered, so it spans about two lines`);
+    const lim = layout.bulletWords.get(i);
+    if (lim && words.length > lim.max)
+      add(i, `too long (${words.length} words); cut it to ${lim.min}-${lim.max} words, the template's length for this slot, so the resume stays on the same number of pages`);
+    if (lim && words.length < lim.min)
+      add(i, `too short (${words.length} words); write ${lim.min}-${lim.max} words, adding the concrete mechanism and why it mattered`);
   });
   return problems;
 }
@@ -203,7 +204,8 @@ export function findStructureProblems(
     problems.set(i, arr);
   };
   const groups = bulletGroups(isList);
-  const companies = groups.filter((g) => g.length >= 6);
+  const layout = computeLayout(opts.originals ?? result, isList);
+  const companies = layout.companies.map((c) => c.indices);
   const top = core.slice(0, 3).filter((c) => c.match.length > 0);
   const mentions = (i: number, c: CoreSkill) =>
     c.match.some((m) => m && plain(result[i]).toLowerCase().includes(m.toLowerCase()));
@@ -225,22 +227,25 @@ export function findStructureProblems(
     }
   }
 
-  companies.forEach((g) => {
+  layout.companies.forEach((co) => {
+    const g = co.indices;
+    const plan = coreCounts(co.slots, top.length);
     const end = companyEndYear(result, g[0]) ?? 9999;
     const released = (name: string) => TIMELINE.find(([re]) => re.test(name))?.[1] ?? 0;
-    // Core-skill coverage: 4 bullets per top-3 core skill.
+    // Core-skill coverage: the plan's bullet count per top-3 core skill.
     const used = new Set<number>();
-    for (const c of top) {
+    for (const [k, c] of top.entries()) {
+      const need = plan.core[k] ?? 0;
       const hits = g.filter((i) => mentions(i, c));
       hits.forEach((i) => used.add(i));
-      let missing = 4 - hits.length;
+      let missing = need - hits.length;
       if (missing <= 0) continue;
       const spare = g.filter((i) => !used.has(i) && !top.some((t) => mentions(i, t))).reverse();
       for (const i of spare) {
         if (missing <= 0) break;
-        // Keep at least two supporting-skill bullets per company.
+        // Keep the plan's supporting-skill bullets.
         const supporting = g.filter((j) => !used.has(j) && !top.some((t) => mentions(j, t)));
-        if (supporting.length <= 2) break;
+        if (supporting.length <= plan.supporting) break;
         used.add(i);
         missing--;
         const older = released(c.name) > end;
@@ -249,15 +254,15 @@ export function findStructureProblems(
           : c.name;
         add(
           i,
-          `rewrite this bullet to focus solely on ${label} (it needs 4 bullets in this company, one per angle: ${ANGLES}); pick an angle not already used by the other bullets on this skill and name the technology explicitly`,
+          `rewrite this bullet to focus solely on ${label} (it needs ${need} bullets in this company, each a different angle: ${ANGLES}); pick an angle not already used by the other bullets on this skill and name the technology explicitly`,
         );
       }
     }
 
-    // Numbers: 5-7 bullets per company with one concrete figure.
+    // Numbers: the plan's share of bullets per company carry one concrete figure.
     const withNum = g.filter((i) => hasMetric(result[i]));
-    if (withNum.length < 5) {
-      let need = 5 - withNum.length;
+    if (withNum.length < co.metricMin) {
+      let need = co.metricMin - withNum.length;
       for (const i of g) {
         if (need <= 0) break;
         if (hasMetric(result[i]) || problems.has(i)) continue;
@@ -267,8 +272,8 @@ export function findStructureProblems(
         );
         need--;
       }
-    } else if (withNum.length > 7) {
-      withNum.slice(7).forEach((i) => add(i, "remove the number from this bullet; describe the impact in words"));
+    } else if (withNum.length > co.metricMax) {
+      withNum.slice(co.metricMax).forEach((i) => add(i, "remove the number from this bullet; describe the impact in words"));
     }
   });
 
@@ -318,7 +323,7 @@ export function findStructureProblems(
     }
   }
   if (tools.length && bullets.length) {
-    const projectGroups = groups.filter((g) => g.length < 6);
+    const projectGroups = groups.filter((g) => !companies.includes(g) && !companies.some((c) => c[0] === g[0]));
     const coreMention = (i: number) => top.some((c) => mentions(i, c));
     const candidates = [
       ...projectGroups.flat(),
@@ -419,4 +424,87 @@ export function autoFix(result: string[], originals: string[], isList: boolean[]
     out[i] = t.replace(w, replacement);
   });
   return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// Layout plan — every count and length comes from the uploaded template, so a
+// one-page template stays one page and a two-page template stays two.
+// ---------------------------------------------------------------------------
+
+export interface CompanyLayout {
+  indices: number[];
+  slots: number;
+  metricMin: number;
+  metricMax: number;
+}
+
+export interface Layout {
+  companies: CompanyLayout[];
+  summaryIdx: number;
+  summary: { minWords: number; maxWords: number; sentences: number } | null;
+  bulletWords: Map<number, { min: number; max: number }>;
+  skillsLines: number;
+}
+
+/** How many bullets each of the top core skills gets in a company with `slots` bullets. */
+export function coreCounts(slots: number, coreSkills: number): { core: number[]; supporting: number } {
+  const supporting = slots >= 12 ? 2 : slots >= 4 ? 1 : 0;
+  const n = Math.max(0, Math.min(3, coreSkills));
+  const core = new Array(n).fill(0);
+  for (let k = 0; k < slots - supporting && n > 0; k++) core[k % n]++;
+  return { core, supporting };
+}
+
+export function computeLayout(originals: string[], isList: boolean[]): Layout {
+  const groups = bulletGroups(isList);
+  let companyGroups = groups.filter((g) => companyEndYear(originals, g[0]) !== null);
+  if (companyGroups.length === 0) companyGroups = groups.filter((g) => g.length >= 6);
+  const companies = companyGroups.map((g) => {
+    const slots = g.length;
+    const metricMin = Math.max(1, Math.round(slots * 0.35));
+    return { indices: g, slots, metricMin, metricMax: Math.max(metricMin, Math.round(slots * 0.55)) };
+  });
+  const bulletWords = new Map<number, { min: number; max: number }>();
+  for (const g of groups) {
+    for (const i of g) {
+      const w = wordCount(originals[i] ?? "");
+      if (w === 0) continue;
+      bulletWords.set(i, { min: Math.max(8, Math.round(w * 0.85)), max: Math.round(w * 1.15) + 1 });
+    }
+  }
+  const summaryIdx = findSummaryIndex(originals);
+  let summary: Layout["summary"] = null;
+  if (summaryIdx >= 0) {
+    const w = wordCount(originals[summaryIdx]);
+    if (w > 0) {
+      summary = {
+        minWords: Math.max(20, Math.round(w * 0.85)),
+        maxWords: Math.round(w * 1.15) + 2,
+        sentences: Math.max(1, countSentences(plain(originals[summaryIdx]))),
+      };
+    }
+  }
+  return { companies, summaryIdx, summary, bulletWords, skillsLines: skillsLineIndices(originals, isList).length };
+}
+
+/** Plain-text layout plan given to the AI so it writes to the template's size. */
+export function layoutPlanText(layout: Layout, coreNames: string[]): string {
+  const lines: string[] = ["", "", "LAYOUT PLAN (from the uploaded template — follow exactly; the resume must keep the template's page count):"];
+  if (layout.summary)
+    lines.push(`- Summary: ${layout.summary.sentences} sentences, ${layout.summary.minWords}-${layout.summary.maxWords} words.`);
+  if (layout.skillsLines) lines.push(`- Skills: exactly ${layout.skillsLines} category lines, each fitting on one line.`);
+  layout.companies.forEach((co, k) => {
+    const plan = coreCounts(co.slots, coreNames.length || 3);
+    const coreText = plan.core
+      .map((n, j) => `${n} on core skill #${j + 1}${coreNames[j] ? ` (${coreNames[j]})` : ""}`)
+      .join(", ");
+    const words = co.indices.map((i) => layout.bulletWords.get(i)).filter(Boolean) as { min: number; max: number }[];
+    const min = Math.min(...words.map((w) => w.min));
+    const max = Math.max(...words.map((w) => w.max));
+    lines.push(
+      `- Company ${k + 1}: ${co.slots} bullets — ${coreText}, ${plan.supporting} on supporting skills; ${co.metricMin}-${co.metricMax} bullets end with one number; each bullet ${min}-${max} words (match the length of the template bullet in the same slot).`,
+    );
+  });
+  return lines.join("\n") + "\n";
 }
