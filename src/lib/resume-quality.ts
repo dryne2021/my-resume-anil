@@ -508,3 +508,61 @@ export function layoutPlanText(layout: Layout, coreNames: string[]): string {
   });
   return lines.join("\n") + "\n";
 }
+
+
+// ---------------------------------------------------------------------------
+// Role titles — chosen per job by the analysis step and written into each
+// company's role line in code, so the template's old titles never repeat.
+// ---------------------------------------------------------------------------
+
+export interface RoleSlot {
+  /** Paragraph index of the role/date line. */
+  index: number;
+  /** Text before the date (e.g. "Software Engineer" or "Software Engineer | Cisco"). */
+  head: string;
+  /** Raw text from the tab/date onward, kept exactly. */
+  tail: string;
+  company: string;
+  years: string;
+}
+
+const MONTH_YEAR_START_RE =
+  /(?:\t|\s{2,}|\s)(?=(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*)?(?:19|20)\d{2}\s*[–—-])/i;
+
+export function findRoleSlots(originals: string[], isList: boolean[]): RoleSlot[] {
+  const slots: RoleSlot[] = [];
+  for (const co of computeLayout(originals, isList).companies) {
+    const start = co.indices[0];
+    for (let h = start - 1; h >= 0 && h >= start - 4; h--) {
+      if (isList[h]) continue;
+      const raw = originals[h] ?? "";
+      const m = DATE_RANGE_RE.exec(plain(raw));
+      if (!m) continue;
+      let split = raw.indexOf("\t");
+      if (split < 0) {
+        const mm = MONTH_YEAR_START_RE.exec(raw);
+        split = mm ? mm.index : -1;
+      }
+      if (split <= 0) break;
+      const head = plain(raw.slice(0, split)).trim();
+      let company = "";
+      if (head.includes(" | ")) company = head.slice(head.indexOf(" | ") + 3);
+      else if (h + 1 < start && !isList[h + 1]) company = plain(originals[h + 1]).split(" | ")[0];
+      slots.push({ index: h, head, tail: raw.slice(split), company: company.trim(), years: plain(raw.slice(split)).trim() });
+      break;
+    }
+  }
+  return slots;
+}
+
+/** Writes the chosen titles into the role lines; dates and company text stay as in the template. */
+export function applyRoleTitles(result: string[], slots: RoleSlot[], titles: string[]): string[] {
+  const out = result.slice();
+  slots.forEach((slot, k) => {
+    const title = (titles[k] ?? "").replace(/[\t|]/g, " ").replace(/\s+/g, " ").trim();
+    if (!title) return;
+    const head = slot.head.includes(" | ") ? title + slot.head.slice(slot.head.indexOf(" | ")) : title;
+    out[slot.index] = head + slot.tail;
+  });
+  return out;
+}

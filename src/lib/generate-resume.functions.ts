@@ -3,7 +3,7 @@ import { requireOwner } from "./auth.functions";
 import { rewriteDocx } from "./docx-rewrite";
 import { chatJson } from "./openai";
 import { analyzeJob, analysisBlock } from "./jd-analysis";
-import { computeLayout, layoutPlanText } from "./resume-quality";
+import { applyRoleTitles, computeLayout, findRoleSlots, layoutPlanText } from "./resume-quality";
 import {
   autoFix,
   findProblems,
@@ -343,7 +343,12 @@ async function callLovableAi(
   };
 
   // Pass 0 — short job analysis: core skills, tools, hiring-company names.
-  const jd = await analyzeJob(jobDescription, apiKey);
+  const roleSlots = findRoleSlots(paragraphs, isList);
+  const jd = await analyzeJob(
+    jobDescription,
+    apiKey,
+    roleSlots.map((r) => ({ company: r.company, years: r.years, currentTitle: r.head })),
+  );
   const layout = computeLayout(paragraphs, isList);
   const analysis = analysisBlock(jd) + layoutPlanText(layout, (jd?.core ?? []).map((c) => c.name));
 
@@ -414,7 +419,9 @@ async function callLovableAi(
   }
 
   // Last resort, in code: banned words and repeated opening verbs never reach the file.
-  return autoFix(result, paragraphs, isList);
+  // Role titles chosen for THIS job replace the template's titles (dates and
+  // company names stay exactly as in the template).
+  return applyRoleTitles(autoFix(result, paragraphs, isList), roleSlots, jd?.roleTitles ?? []);
 }
 
 

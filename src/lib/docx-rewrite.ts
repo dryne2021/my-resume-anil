@@ -35,6 +35,19 @@ interface Block {
   isList: boolean;
 }
 
+/** True when the text after the paragraph's tab (the date) sits in bold runs. */
+function isDateBold(paragraphXml: string): boolean {
+  const tabAt = paragraphXml.search(/<w:tab\s*\/>/);
+  if (tabAt < 0) return false;
+  const runs = paragraphXml.slice(tabAt).match(/<w:r[\s>][\s\S]*?<\/w:r>/g) ?? [];
+  // The tab's own run is the first match only if the tab sits inside it; include
+  // the run that contains the tab by scanning back to its opening tag.
+  const runStart = paragraphXml.lastIndexOf("<w:r", tabAt);
+  const tabRun = runStart >= 0 ? paragraphXml.slice(runStart, paragraphXml.indexOf("</w:r>", tabAt) + 6) : "";
+  const textRuns = [tabRun, ...runs].filter((r) => /<w:t(?:\s[^>]*)?>[^<]*\S[^<]*<\/w:t>/.test(r));
+  return textRuns.length > 0 && textRuns.every((r) => /<w:b\s*\/>|<w:b\s+w:val="(?:1|true|on)"\s*\/>/.test(r));
+}
+
 function extractParagraphs(xml: string): Block[] {
   const blocks: Block[] = [];
   const pOpenRe = /<w:p(?:\s[^>]*)?>/g;
@@ -393,10 +406,17 @@ export async function rewriteDocx(
         /[.!?]$/.test(head) ||
         wordCount > 14 ||
         (origHead.includes(" | ") && !head.includes(" | ")) ||
-        head.length > origHead.length * 1.6;
+        head.length > Math.max(origHead.length * 1.6, 60);
       if (looksLikeProse) head = origHead;
       if (head.length === 0) head = origHead;
-      rewritten[i] = `**${head}**${origTail}`;
+      // Keep the date bold when the template's date is bold (e.g. the one-page template).
+      const dateBold = isDateBold(originalXml.slice(blocks[i].start, blocks[i].end));
+      const tabLead = origTail.match(/^\s*/)?.[0] ?? "";
+      const dateText = origTail.slice(tabLead.length);
+      rewritten[i] =
+        dateBold && dateText.trim()
+          ? `**${head}**${tabLead}**${dateText}**`
+          : `**${head}**${origTail}`;
       continue;
     }
 
@@ -713,7 +733,10 @@ function enforceTwoLineCompanyHeaders(
       head = origHead; // merged the two lines back together — revert.
     }
     if (head.length === 0 || DATE.test(head)) head = origHead;
-    rewritten[i] = tail ? `**${head}**${tail}` : `**${head}**`;
+    // Keep the date formatting chosen earlier (e.g. bold dates) when it is the same date text.
+    const outTail = outTabIdx > 0 ? out.slice(outTabIdx) : "";
+    const dateTail = outTail && strip(outTail).trim() === strip(tail).trim() ? outTail : tail;
+    rewritten[i] = dateTail ? `**${head}**${dateTail}` : `**${head}**`;
   }
 
   // 3) NO-REPEAT LOCK — no bullet may repeat a company line, and no two bullets

@@ -12,6 +12,8 @@ export interface JdAnalysis {
   supporting: string[];
   tools: string[];
   hiringNames: string[];
+  /** One title per candidate employer, most recent first. */
+  roleTitles: string[];
 }
 
 const ANALYSIS_PROMPT = `You analyze a job description (JD) so a resume can be tailored to it. Read ONLY the responsibilities, requirements, qualifications, "key technologies" and skills sections; ignore company overview, mission, benefits, perks, working conditions and EEO text.
@@ -22,7 +24,8 @@ Return ONLY strict JSON:
   "core": [{"name": "C++", "match": ["C++"], "olderEquivalent": ""}],
   "supporting": ["..."],
   "tools": ["..."],
-  "hiringNames": ["..."]
+  "hiringNames": ["..."],
+  "roleTitles": ["...", "..."]
 }
 
 Rules:
@@ -33,7 +36,13 @@ Rules:
   * "olderEquivalent": for a tool released 2022 or later (e.g. Azure AI Foundry, LangChain, GitHub Copilot), the closest technology that existed in 2020-2021 (e.g. "Azure Machine Learning"); otherwise "".
 - "supporting": the other technical skills/responsibilities from the JD, split into single skills (max 12).
 - "tools": EVERY named language, tool, platform, OS, framework, protocol and product from the JD, split into single items with official spelling ("Git Hub Copilot" -> "GitHub Copilot", "Azure Dev Ops" -> "Azure DevOps", "Foundry" -> "Azure AI Foundry"). For "X, Y, etc." keep each named item; for "X or Y or similar" keep only X.
-- "hiringNames": the hiring company's name and any of its own product, brand or trademark names (anything with ™ or ®, or clearly proprietary). The resume must never mention these.`;
+- "hiringNames": the hiring company's name and any of its own product, brand or trademark names (anything with ™ or ®, or clearly proprietary). The resume must never mention these.
+- "roleTitles": one job title for EACH candidate employer listed in the user message, in the same order (most recent first). Rules:
+  * It is a real job title for the JD's job FUNCTION (e.g. JD for a healthcare business analyst -> "Business Systems Analyst"; JD for an AI engineer -> "AI Engineer"; JD for IT audit -> "IT Audit Analyst"), 2-6 words, optionally "Function – specialization" (e.g. "Software Engineer – Embedded Systems").
+  * It must be believable at THAT employer's industry: never put the hiring company's industry words into it (no "Clinical", "Healthcare", "Battery", "Energy" in a title at a bank, a networking company or a food-delivery platform). Use the function, or a specialization that fits both the JD and the employer (e.g. "Business Systems Analyst – Data & Reporting").
+  * The titles must all be DIFFERENT from each other. The earlier employer gets the same function at an earlier career stage or a closely related role (e.g. "Business Systems Analyst" then "Business Analyst"; "Software Engineer – Platform" then "Software Engineer"; "IT Audit Analyst" then "IT Compliance Analyst").
+  * No "Senior", "Junior", "Lead", "Staff", "Principal", "Head" or "Manager" unless the JD itself is a management role.
+  * Never reuse the template's current titles (given in the user message) unless they genuinely fit this JD.`;
 
 function cleanList(v: unknown, max: number): string[] {
   if (!Array.isArray(v)) return [];
@@ -42,12 +51,30 @@ function cleanList(v: unknown, max: number): string[] {
   ).slice(0, max);
 }
 
-export async function analyzeJob(jobDescription: string, apiKey: string): Promise<JdAnalysis | null> {
+export interface EmployerInfo {
+  company: string;
+  years: string;
+  currentTitle: string;
+}
+
+export async function analyzeJob(
+  jobDescription: string,
+  apiKey: string,
+  employers: EmployerInfo[] = [],
+): Promise<JdAnalysis | null> {
   try {
     const content = await chatJson({
       apiKey,
       system: ANALYSIS_PROMPT,
-      user: "JOB DESCRIPTION:\n" + jobDescription,
+      user:
+        "JOB DESCRIPTION:\n" +
+        jobDescription +
+        (employers.length
+          ? "\n\nCANDIDATE EMPLOYERS (most recent first) — give one roleTitle each:\n" +
+            employers
+              .map((e, k) => `${k + 1}. ${e.company || "(company)"} (${e.years}) — template title now: "${e.currentTitle}"`)
+              .join("\n")
+          : ""),
       maxTokens: 2000,
       temperature: 0.1,
     });
@@ -70,10 +97,23 @@ export async function analyzeJob(jobDescription: string, apiKey: string): Promis
       supporting: cleanList(raw.supporting, 12),
       tools: cleanList(raw.tools, 30),
       hiringNames: cleanList(raw.hiringNames, 10),
+      roleTitles: distinctTitles(cleanList(raw.roleTitles, 6), employers),
     };
   } catch {
     return null; // fall back to the writer choosing core skills itself
   }
+}
+
+/** Keeps a title per employer only when it is new and different from the others. */
+function distinctTitles(titles: string[], employers: EmployerInfo[]): string[] {
+  const seen = new Set<string>();
+  return employers.map((e, k) => {
+    const t = (titles[k] ?? "").trim();
+    const key = t.toLowerCase();
+    if (!t || t.split(/\s+/).length > 8 || seen.has(key)) return "";
+    seen.add(key);
+    return t;
+  });
 }
 
 /** Text block given to the writing step. */
@@ -82,11 +122,16 @@ export function analysisBlock(a: JdAnalysis | null): string {
   return (
     "\n\nJD ANALYSIS (decided already — follow it exactly):\n" +
     `- Title specialization: ${a.titleFocus || "(choose)"}\n` +
-    `- CORE SKILLS in priority order (each gets 4 dedicated bullets per company; for older companies use the period-correct equivalent shown): ${a.core
+    `- CORE SKILLS in priority order (the LAYOUT PLAN says how many bullets each gets per company; for older companies use the period-correct equivalent shown): ${a.core
       .map((c, k) => `#${k + 1} ${c.name} [match: ${c.match.join(" / ")}]`)
       .join("; ")}\n` +
     `- Supporting skills: ${a.supporting.join(", ") || "(none)"}\n` +
     `- TOOLS that must each appear in Skills AND in at least one bullet: ${a.tools.join(", ") || "(none)"}\n` +
-    `- NEVER mention these hiring-company names or products anywhere: ${a.hiringNames.join(", ") || "(none)"}\n`
+    `- NEVER mention these hiring-company names or products anywhere: ${a.hiringNames.join(", ") || "(none)"}\n` +
+    (a.roleTitles.some(Boolean)
+      ? `- ROLE TITLES (already set in code — write each company's bullets as work done in that role): ${a.roleTitles
+          .map((t, k) => `company ${k + 1}: ${t || "(keep)"}`)
+          .join("; ")}\n`
+      : "")
   );
 }
