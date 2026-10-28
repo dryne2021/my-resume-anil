@@ -1,4 +1,5 @@
 import PizZip from "pizzip";
+import { firstSectionIndex, isContactLine } from "./resume-quality";
 
 /**
  * Resume content rewriter that preserves the original .docx formatting.
@@ -33,6 +34,14 @@ interface Block {
   text: string;
   /** True when the paragraph is a numbered/bulleted list item in the template. */
   isList: boolean;
+}
+
+/** True when every text run in the paragraph is bold. */
+function isAllBold(paragraphXml: string): boolean {
+  const runs = (paragraphXml.match(/<w:r[\s>][\s\S]*?<\/w:r>/g) ?? []).filter((r) =>
+    /<w:t(?:\s[^>]*)?>[^<]*\S[^<]*<\/w:t>/.test(r),
+  );
+  return runs.length > 0 && runs.every((r) => /<w:b\s*\/>|<w:b\s+w:val="(?:1|true|on)"\s*\/>/.test(r));
 }
 
 /** True when the text after the paragraph's tab (the date) sits in bold runs. */
@@ -351,10 +360,26 @@ export async function rewriteDocx(
   let inExperience = false;
   let inSummary = false;
 
+  // Page header = everything above the first section heading (name, title, contact).
+  const headerEnd = firstSectionIndex(paragraphs);
+
   for (let i = 0; i < paragraphs.length; i++) {
     const orig = paragraphs[i];
     const origTrim = orig.trim();
     const isListSlot = blocks[i]?.isList === true;
+
+    // 0) Page header: the name and contact line stay verbatim; the title line
+    // takes the new text but keeps the template's own weight (bold or not).
+    if (i < headerEnd && origTrim.length > 0) {
+      const cleanedHeader = stripBoldMarkers(sanitize(rewritten[i] ?? "")).trim();
+      if (isAllCapsHeading(orig) || isContactLine(orig) || !cleanedHeader || cleanedHeader.split(/\s+/).length > 14) {
+        rewritten[i] = orig;
+      } else {
+        const bold = isAllBold(originalXml.slice(blocks[i].start, blocks[i].end));
+        rewritten[i] = bold ? `**${cleanedHeader}**` : cleanedHeader;
+      }
+      continue;
+    }
 
     // 1) Empty paragraphs stay empty — never let the AI fill spacer lines.
     if (origTrim.length === 0) {

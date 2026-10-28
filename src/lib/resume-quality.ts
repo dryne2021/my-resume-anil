@@ -559,10 +559,74 @@ export function findRoleSlots(originals: string[], isList: boolean[]): RoleSlot[
 export function applyRoleTitles(result: string[], slots: RoleSlot[], titles: string[]): string[] {
   const out = result.slice();
   slots.forEach((slot, k) => {
-    const title = (titles[k] ?? "").replace(/[\t|]/g, " ").replace(/\s+/g, " ").trim();
+    const title = cleanTitle(titles[k] ?? "");
     if (!title) return;
     const head = slot.head.includes(" | ") ? title + slot.head.slice(slot.head.indexOf(" | ")) : title;
     out[slot.index] = head + slot.tail;
   });
   return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// Headline (the title line under the name): "Job Title — Specialization".
+// ---------------------------------------------------------------------------
+
+const SECTION_HEADING_RE =
+  /^(professional\s+|technical\s+|core\s+|work\s+)?(summary|profile|objective|skills|experience|employment|education|projects?|certifications?)\s*:?\s*$/i;
+const CONTACT_RE = /@|\+?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|linkedin|github\.com|https?:/i;
+
+/** Index of the first section heading (SUMMARY, SKILLS, ...); everything above it is the page header. */
+export function firstSectionIndex(paragraphs: string[]): number {
+  const i = paragraphs.findIndex((t) => SECTION_HEADING_RE.test(plain(t)));
+  return i < 0 ? paragraphs.length : i;
+}
+
+/** True for page-header lines that must stay exactly as in the template (contact details). */
+export function isContactLine(t: string): boolean {
+  return CONTACT_RE.test(plain(t));
+}
+
+/** The title line under the candidate's name, or -1. */
+export function findHeadlineIndex(originals: string[]): number {
+  const end = firstSectionIndex(originals);
+  let seenName = false;
+  for (let i = 0; i < end; i++) {
+    const t = plain(originals[i] ?? "");
+    if (!t) continue;
+    if (!seenName) {
+      seenName = true; // first line is the name
+      continue;
+    }
+    if (isContactLine(t)) continue;
+    if (t.split(/\s+/).length > 12) continue;
+    return i;
+  }
+  return -1;
+}
+
+// Words that describe how/where the job is done, not what it is.
+const ARRANGEMENT_RE =
+  /\b(hybrid|remote|on-?site|in-?office|work from home|wfh|full[- ]?time|part[- ]?time|contract(?:or)?|contract-to-hire|c2h|w2|1099|temporary|temp|permanent|immediate(?:ly)?|urgent(?:ly)?|hiring|now hiring|role|position|opening|opportunity|req(?:uisition)?|job|vacancy)\b/gi;
+
+/** Removes work-arrangement words, locations in brackets and stray separators from a title. */
+export function cleanTitle(t: string): string {
+  return (t ?? "")
+    .replace(/[\t|]/g, " ")
+    .replace(/\([^)]*\)|\[[^\]]*\]/g, " ")
+    .replace(ARRANGEMENT_RE, " ")
+    .replace(/\b(senior|sr\.?|junior|jr\.?|principal)\s+/gi, "")
+    .replace(/\s+(?:I{1,3}|IV|[1-4])\b(?=\s*(?:[–—-]|$))/g, "")
+    .replace(/\s*[–—-]\s*(?=[–—-]|$)/g, " ")
+    .replace(/^\s*[–—,:-]+|[–—,:-]+\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** "Internal Auditor — Retirement & Wealth Management" (em dash with spaces). */
+export function formatHeadline(title: string, focus: string): string {
+  const t = cleanTitle(title);
+  const f = cleanTitle(focus);
+  if (!t) return "";
+  return f && f.toLowerCase() !== t.toLowerCase() ? `${t} — ${f}` : t;
 }

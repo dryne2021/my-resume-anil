@@ -3,7 +3,14 @@ import { requireOwner } from "./auth.functions";
 import { rewriteDocx } from "./docx-rewrite";
 import { chatJson } from "./openai";
 import { analyzeJob, analysisBlock } from "./jd-analysis";
-import { applyRoleTitles, computeLayout, findRoleSlots, layoutPlanText } from "./resume-quality";
+import {
+  applyRoleTitles,
+  computeLayout,
+  findHeadlineIndex,
+  findRoleSlots,
+  formatHeadline,
+  layoutPlanText,
+} from "./resume-quality";
 import {
   autoFix,
   findProblems,
@@ -77,7 +84,7 @@ LENGTH LOCK (critical — the resume must keep the template's page count, e.g. O
 
 Header/title rules:
 - Name, location, relocation/remote line and contact details stay exactly as in the template.
-- TARGET TITLE: the top title line is rewritten for THIS JD as a short title of 3-5 words matching the role's actual focus, decided after the core skills are known, using "Main profession – specialization", e.g. "Software Engineer – Data Infrastructure & Pipelines", "Software Engineer – Integrations & OAuth/MCP Platform". Never copy an overly narrow or inflated JD title verbatim.
+- TARGET TITLE (when a HEADLINE is given in the JD ANALYSIS block, return that exact text for the top title line): the top title line is rewritten for THIS JD as a short title of 3-5 words matching the role's actual focus, decided after the core skills are known, using "Main profession – specialization", e.g. "Software Engineer – Data Infrastructure & Pipelines", "Software Engineer – Integrations & OAuth/MCP Platform". Never copy an overly narrow or inflated JD title verbatim.
 - Every company role line is also rewritten to match the target role, never left generic, in the same short form.
 - Do not use seniority words (Senior, Junior, Lead, Staff, Principal) in any title.
 - Company/role header lines that contain a TAB character (\\t) must keep the tab in place: text before the tab is the role (and company/location when the template puts them together), text after the tab is the date. Never remove the \\t. Never move the date to a new paragraph.
@@ -421,7 +428,12 @@ async function callLovableAi(
   // Last resort, in code: banned words and repeated opening verbs never reach the file.
   // Role titles chosen for THIS job replace the template's titles (dates and
   // company names stay exactly as in the template).
-  return applyRoleTitles(autoFix(result, paragraphs, isList), roleSlots, jd?.roleTitles ?? []);
+  const titled = applyRoleTitles(autoFix(result, paragraphs, isList), roleSlots, jd?.roleTitles ?? []);
+  // Headline under the name: "Job Title — Specialization", never work-arrangement words.
+  const h = findHeadlineIndex(paragraphs);
+  const headline = jd ? formatHeadline(jd.headlineTitle || jd.roleTitles[0] || "", jd.titleFocus) : "";
+  if (h >= 0 && headline) titled[h] = headline;
+  return titled;
 }
 
 

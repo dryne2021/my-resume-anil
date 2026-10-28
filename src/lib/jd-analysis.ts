@@ -8,6 +8,8 @@ import type { CoreSkill } from "./resume-quality";
 
 export interface JdAnalysis {
   titleFocus: string;
+  /** Headline job title, e.g. "Internal Auditor". */
+  headlineTitle: string;
   core: CoreSkill[];
   supporting: string[];
   tools: string[];
@@ -20,7 +22,8 @@ const ANALYSIS_PROMPT = `You analyze a job description (JD) so a resume can be t
 
 Return ONLY strict JSON:
 {
-  "titleFocus": "3-5 word specialization for the resume title, e.g. 'Embedded Linux & Test Automation'",
+  "headlineTitle": "the job title for the line under the candidate's name, e.g. 'Internal Auditor'",
+  "titleFocus": "2-5 word specialization shown after the title, e.g. 'Retirement & Wealth Management'",
   "core": [{"name": "C++", "match": ["C++"], "olderEquivalent": ""}],
   "supporting": ["..."],
   "tools": ["..."],
@@ -37,6 +40,9 @@ Rules:
 - "supporting": the other technical skills/responsibilities from the JD, split into single skills (max 12).
 - "tools": EVERY named language, tool, platform, OS, framework, protocol and product from the JD, split into single items with official spelling ("Git Hub Copilot" -> "GitHub Copilot", "Azure Dev Ops" -> "Azure DevOps", "Foundry" -> "Azure AI Foundry"). For "X, Y, etc." keep each named item; for "X or Y or similar" keep only X.
 - "hiringNames": the hiring company's name and any of its own product, brand or trademark names (anything with ™ or ®, or clearly proprietary). The resume must never mention these.
+- "headlineTitle" + "titleFocus" form the resume headline "headlineTitle — titleFocus", e.g. "Internal Auditor — Retirement & Wealth Management", "Business Systems Analyst — Clinical Applications", "Software Engineer — Embedded Linux & Test Automation".
+  * headlineTitle: the JD's job title in its plain professional form — drop seniority (Senior, Sr., Lead, Staff, Principal, I/II/III), work arrangement (Hybrid, Remote, Onsite, Full-time, Contract), location, team or requisition codes. "Senior Internal Auditor - Hybrid" -> "Internal Auditor".
+  * titleFocus: Title Case, 2-5 words naming the business area or technical specialization the JD is about (its domain, products or main skill area). NEVER a work arrangement or schedule (Hybrid, Remote, Onsite, Full-time), a location, a level, the words "Role"/"Position", or the hiring company's name.
 - "roleTitles": one job title for EACH candidate employer listed in the user message, in the same order (most recent first). Rules:
   * It is a real job title for the JD's job FUNCTION (e.g. JD for a healthcare business analyst -> "Business Systems Analyst"; JD for an AI engineer -> "AI Engineer"; JD for IT audit -> "IT Audit Analyst"), 2-6 words, optionally "Function – specialization" (e.g. "Software Engineer – Embedded Systems").
   * It must be believable at THAT employer's industry: never put the hiring company's industry words into it (no "Clinical", "Healthcare", "Battery", "Energy" in a title at a bank, a networking company or a food-delivery platform). Use the function, or a specialization that fits both the JD and the employer (e.g. "Business Systems Analyst – Data & Reporting").
@@ -93,6 +99,7 @@ export async function analyzeJob(
     if (core.length === 0) return null;
     return {
       titleFocus: typeof raw.titleFocus === "string" ? raw.titleFocus.trim() : "",
+      headlineTitle: typeof raw.headlineTitle === "string" ? raw.headlineTitle.trim() : "",
       core,
       supporting: cleanList(raw.supporting, 12),
       tools: cleanList(raw.tools, 30),
@@ -121,7 +128,7 @@ export function analysisBlock(a: JdAnalysis | null): string {
   if (!a) return "";
   return (
     "\n\nJD ANALYSIS (decided already — follow it exactly):\n" +
-    `- Title specialization: ${a.titleFocus || "(choose)"}\n` +
+    `- HEADLINE (set in code, do not change): ${a.headlineTitle ? `${a.headlineTitle} — ${a.titleFocus}` : "(choose)"}\n` +
     `- CORE SKILLS in priority order (the LAYOUT PLAN says how many bullets each gets per company; for older companies use the period-correct equivalent shown): ${a.core
       .map((c, k) => `#${k + 1} ${c.name} [match: ${c.match.join(" / ")}]`)
       .join("; ")}\n` +
