@@ -119,6 +119,7 @@ Experience rules (two companies):
 - Order: keep the grouping above (core skill #1 first).
 - The core skill is the SUBJECT of its bullet — what was built, tested or run with it. A passing mention ("generated via GitHub Copilot", "scripted with Copilot") does not count.
 - No semicolons in bullets; one sentence only.
+- Every bullet starts with a past-tense action verb in active voice (never "X was improved…", never a noun phrase first). Write numbers as digits. Do not use em dashes (—) in bullets or the summary; use commas.
 - BULLET FORMULA: WHAT WAS BUILT + THE ONE TECHNOLOGY + TECHNICAL DEPTH (mechanism, data type, failure mode or scale) + WHY IT MATTERED. Example: "Built a PostgreSQL-backed job queue using row-level locking and SKIP LOCKED so concurrent workers could claim export jobs without double-processing during peak billing runs." Weak lines such as "Worked with Go and Kubernetes." are invalid.
 - When the JD emphasizes two languages, each gets its own bullets — never mention both superficially in one bullet.
 - WORDING STYLE: ONE clear sentence per bullet, at the LAYOUT PLAN length, calm and concrete product/systems-engineering language — no hype, no two-sentence bullets. A bullet names what was built, the JD technologies used, technical depth, and why it mattered; it must READ NATURALLY, like a human engineer wrote it. Never shorten a bullet into a generic statement, chain four or five noun phrases together, or pad it with filler such as "comprehensive", "dynamic environments", "seamless", "end-to-end", "robust and scalable", "utilizing", "leveraging". Target voice:
@@ -367,6 +368,8 @@ async function callLovableAi(
     originals: paragraphs,
     tools: jd?.tools ?? [],
     hiringNames: jd?.hiringNames ?? [],
+    domainTerms: jd?.domainTerms ?? [],
+    employerContexts: jd?.employerContexts ?? [],
   };
 
   // Pass 2 — re-request any indices the model silently skipped.

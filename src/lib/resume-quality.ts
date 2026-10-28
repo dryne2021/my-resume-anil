@@ -159,6 +159,24 @@ const ANGLES =
  * Structure checks that need the whole resume: core-skill coverage, number counts
  * and the timeline. Returns problems keyed by paragraph index.
  */
+const IRREGULAR_PAST = new Set(
+  "built led ran drove wrote made set cut kept held found won grew shipped brought took bought sought taught thought caught oversaw undertook rebuilt rewrote overhauled spun began chose gave got went saw stood understood upheld withheld put met sped split shot dealt fed".split(" "),
+);
+const NUMBER_WORD_RE =
+  /\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozen)\b(?!-)/i;
+
+/** First-word and voice checks shared by the repair loop. */
+export function verbProblems(t: string): string[] {
+  const out: string[] = [];
+  const first = (t.match(/^[A-Za-z-]+/)?.[0] ?? "").toLowerCase();
+  if (first && !first.endsWith("ed") && !IRREGULAR_PAST.has(first))
+    out.push(`starts with "${t.split(/\s+/)[0]}"; start with a strong past-tense action verb (e.g. Built, Designed, Automated) and keep it in active voice`);
+  if (/\b(was|were|been|being|got)\s+(?:\w+ly\s+)?\w+ed\b/i.test(t))
+    out.push('uses passive voice ("was/were …ed"); rewrite in active voice with the candidate as the doer');
+  if (NUMBER_WORD_RE.test(t)) out.push("write numbers as digits (e.g. 4, 120, 2,000), not words");
+  return out;
+}
+
 export interface StructureOptions {
   /** Template paragraphs (used to locate the Skills section). */
   originals?: string[];
@@ -166,6 +184,10 @@ export interface StructureOptions {
   tools?: string[];
   /** Hiring company and product names that must never appear. */
   hiringNames?: string[];
+  /** Hiring-industry words that must not appear in past-employer bullets. */
+  domainTerms?: string[];
+  /** One description per company of its own business, for the rewrite message. */
+  employerContexts?: string[];
 }
 
 const HEADING_WORD_RE = /^(experience|education|projects?|summary|skills|professional experience|work experience|certifications?)$/i;
@@ -279,9 +301,28 @@ export function findStructureProblems(
 
   const bullets = groups.flat();
 
-  // Bullet hygiene: no semicolon second clauses, no release-timing commentary.
+  // Hiring-industry words inside past-employer bullets ("clinical" at a bank).
+  const domainRes = (opts.domainTerms ?? [])
+    .filter((d) => d.length > 2)
+    .map((d) => [d, new RegExp(`(^|[^a-z])${d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?([^a-z]|$)`, "i")] as const);
+  layout.companies.forEach((co, k) => {
+    for (const i of co.indices) {
+      const hits = domainRes.filter(([, re]) => re.test(plain(result[i]))).map(([d]) => d);
+      if (hits.length) {
+        const ctx = opts.employerContexts?.[k];
+        add(
+          i,
+          `uses the hiring company's industry words (${hits.join(", ")}) at a past employer; keep the same skill but set the work inside this employer's own business${ctx ? ` (${ctx})` : ""}`,
+        );
+      }
+    }
+  });
+
+  // Bullet hygiene: no semicolon second clauses, no release-timing commentary,
+  // verb-first active voice, digits not words.
   for (const i of bullets) {
     const t = plain(result[i]);
+    for (const msg of verbProblems(t)) add(i, msg);
     if (/;/.test(t)) add(i, "remove the semicolon; write ONE sentence");
     if (TIMING_TEXT_RE.test(t)) add(i, "do not write about release dates or timing; just describe the work with the period-correct technology");
   }
@@ -401,7 +442,13 @@ const VERB_POOL = [
 
 /** Replaces banned words everywhere and swaps any repeated opening verb for an unused one. */
 export function autoFix(result: string[], originals: string[], isList: boolean[]): string[] {
-  const out = result.map((t, i) => (plain(t) && t !== originals[i] ? replaceBannedWords(t) : t));
+  const summaryIdx = findSummaryIndex(originals);
+  const out = result.map((t, i) => {
+    if (!plain(t) || t === originals[i]) return t;
+    let v = replaceBannedWords(t);
+    if (isList[i] || i === summaryIdx) v = replaceDashes(v);
+    return v;
+  });
   const seen = new Set<string>();
   const firstWord = (t: string) => (t.match(/^\s*(\*\*)?([A-Za-z-]+)/)?.[2] ?? "");
   out.forEach((t, i) => {
@@ -629,4 +676,19 @@ export function formatHeadline(title: string, focus: string): string {
   const f = cleanTitle(focus);
   if (!t) return "";
   return f && f.toLowerCase() !== t.toLowerCase() ? `${t} — ${f}` : t;
+}
+
+
+/** Em/en dashes used as clause breaks become commas ("…systems—improving…" -> "…systems, improving…"). */
+export function replaceDashes(t: string): string {
+  return t
+    .replace(/\s*[—–]\s*(?=\S)/g, (m, off: number, str: string) => {
+      // keep number ranges like "2020–2022" or "5–10"
+      const before = str.slice(0, off);
+      const after = str.slice(off + m.length);
+      if (/\d$/.test(before) && /^\d/.test(after)) return "–";
+      return ", ";
+    })
+    .replace(/,\s*,/g, ",")
+    .replace(/ {2,}/g, " ");
 }

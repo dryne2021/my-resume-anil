@@ -16,6 +16,10 @@ export interface JdAnalysis {
   hiringNames: string[];
   /** One title per candidate employer, most recent first. */
   roleTitles: string[];
+  /** The hiring company's industry words that must not appear in past-employer bullets. */
+  domainTerms: string[];
+  /** One short description of each candidate employer's own business, same order as roleTitles. */
+  employerContexts: string[];
 }
 
 const ANALYSIS_PROMPT = `You analyze a job description (JD) so a resume can be tailored to it. Read ONLY the responsibilities, requirements, qualifications, "key technologies" and skills sections; ignore company overview, mission, benefits, perks, working conditions and EEO text.
@@ -28,7 +32,9 @@ Return ONLY strict JSON:
   "supporting": ["..."],
   "tools": ["..."],
   "hiringNames": ["..."],
-  "roleTitles": ["...", "..."]
+  "roleTitles": ["...", "..."],
+  "domainTerms": ["..."],
+  "employerContexts": ["...", "..."]
 }
 
 Rules:
@@ -43,6 +49,8 @@ Rules:
 - "headlineTitle" + "titleFocus" form the resume headline "headlineTitle — titleFocus", e.g. "Internal Auditor — Retirement & Wealth Management", "Business Systems Analyst — Clinical Applications", "Software Engineer — Embedded Linux & Test Automation".
   * headlineTitle: the JD's job title in its plain professional form — drop seniority (Senior, Sr., Lead, Staff, Principal, I/II/III), work arrangement (Hybrid, Remote, Onsite, Full-time, Contract), location, team or requisition codes. "Senior Internal Auditor - Hybrid" -> "Internal Auditor".
   * titleFocus: Title Case, 2-5 words naming the business area or technical specialization the JD is about (its domain, products or main skill area). NEVER a work arrangement or schedule (Hybrid, Remote, Onsite, Full-time), a location, a level, the words "Role"/"Position", or the hiring company's name.
+- "domainTerms": 4-12 single words or short phrases that belong to the HIRING company's industry, customers or physical domain and would be strange at an unrelated employer — e.g. for a hospital JD: "clinical", "patient", "hospital", "physician", "nursing"; for a battery maker: "battery", "energy storage", "grid", "substation". Lowercase. NEVER include tools, programming languages, platforms or general business words (requirements, workflow, reporting, compliance, audit, data).
+- "employerContexts": for EACH candidate employer (same order), one short line on what that company's own business is and 2-3 realistic areas where the JD's skills would be applied there, e.g. "Northern Trust: wealth management and custody bank — client onboarding, trust accounting, regulatory reporting".
 - "roleTitles": one job title for EACH candidate employer listed in the user message, in the same order (most recent first). Rules:
   * It is a real job title for the JD's job FUNCTION (e.g. JD for a healthcare business analyst -> "Business Systems Analyst"; JD for an AI engineer -> "AI Engineer"; JD for IT audit -> "IT Audit Analyst"), 2-6 words, optionally "Function – specialization" (e.g. "Software Engineer – Embedded Systems").
   * It must be believable at THAT employer's industry: never put the hiring company's industry words into it (no "Clinical", "Healthcare", "Battery", "Energy" in a title at a bank, a networking company or a food-delivery platform). Use the function, or a specialization that fits both the JD and the employer (e.g. "Business Systems Analyst – Data & Reporting").
@@ -105,6 +113,13 @@ export async function analyzeJob(
       tools: cleanList(raw.tools, 30),
       hiringNames: cleanList(raw.hiringNames, 10),
       roleTitles: distinctTitles(cleanList(raw.roleTitles, 6), employers),
+      domainTerms: cleanList(raw.domainTerms, 12).map((t) => t.toLowerCase()),
+      employerContexts: Array.isArray(raw.employerContexts)
+        ? employers.map((_, k) => {
+            const v = (raw.employerContexts as unknown[])[k];
+            return typeof v === "string" ? v.trim() : "";
+          })
+        : [],
     };
   } catch {
     return null; // fall back to the writer choosing core skills itself
@@ -136,7 +151,15 @@ export function analysisBlock(a: JdAnalysis | null): string {
     `- TOOLS that must each appear in Skills AND in at least one bullet: ${a.tools.join(", ") || "(none)"}\n` +
     `- NEVER mention these hiring-company names or products anywhere: ${a.hiringNames.join(", ") || "(none)"}\n` +
     (a.roleTitles.some(Boolean)
-      ? `- ROLE TITLES (already set in code — write each company's bullets as work done in that role): ${a.roleTitles
+      ? (a.employerContexts.some(Boolean)
+          ? `- EMPLOYER CONTEXT (write each company's bullets inside ITS business): ${a.employerContexts
+              .map((c, k) => `company ${k + 1}: ${c || "(its own business)"}`)
+              .join("; ")}\n`
+          : "") +
+        (a.domainTerms.length
+          ? `- HIRING-INDUSTRY WORDS that must NOT appear in any company bullet (use the employer's own world instead): ${a.domainTerms.join(", ")}\n`
+          : "") +
+        `- ROLE TITLES (already set in code — write each company's bullets as work done in that role): ${a.roleTitles
           .map((t, k) => `company ${k + 1}: ${t || "(keep)"}`)
           .join("; ")}\n`
       : "")
