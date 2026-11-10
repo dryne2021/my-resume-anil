@@ -3,6 +3,7 @@ import { requireOwner } from "./auth.functions";
 import { rewriteDocx } from "./docx-rewrite";
 import { chatJson } from "./openai";
 import { analyzeJob, analysisBlock } from "./jd-analysis";
+import { employerBlock, findEmployerProfile, profileContext } from "./employers";
 import {
   applyRoleTitles,
   computeLayout,
@@ -352,13 +353,28 @@ async function callLovableAi(
 
   // Pass 0 — short job analysis: core skills, tools, hiring-company names.
   const roleSlots = findRoleSlots(paragraphs, isList);
+  // Built-in employer profiles (e.g. Northern Trust = custody bank and wealth manager).
+  const profiles = roleSlots.map((r) => findEmployerProfile(r.company));
   const jd = await analyzeJob(
     jobDescription,
     apiKey,
-    roleSlots.map((r) => ({ company: r.company, years: r.years, currentTitle: r.head })),
+    roleSlots.map((r, k) => ({
+      company: profiles[k] ? `${r.company} (${profiles[k]!.business})` : r.company,
+      years: r.years,
+      currentTitle: r.head,
+    })),
   );
+  if (jd) {
+    // Known employers: our checked description replaces the AI's guess.
+    jd.employerContexts = roleSlots.map((_, k) =>
+      profiles[k] ? profileContext(profiles[k]!) : (jd.employerContexts[k] ?? ""),
+    );
+  }
   const layout = computeLayout(paragraphs, isList);
-  const analysis = analysisBlock(jd) + layoutPlanText(layout, (jd?.core ?? []).map((c) => c.name));
+  const analysis =
+    analysisBlock(jd) +
+    employerBlock(profiles) +
+    layoutPlanText(layout, (jd?.core ?? []).map((c) => c.name));
 
   // Pass 1 — full resume.
   const first = await requestRewrite(items, jobDescription, apiKey, "", analysis);
@@ -369,7 +385,8 @@ async function callLovableAi(
     tools: jd?.tools ?? [],
     hiringNames: jd?.hiringNames ?? [],
     domainTerms: jd?.domainTerms ?? [],
-    employerContexts: jd?.employerContexts ?? [],
+    employerContexts: jd?.employerContexts ?? roleSlots.map((_, k) => (profiles[k] ? profileContext(profiles[k]!) : "")),
+    employerProfiles: profiles,
   };
 
   // Pass 2 — re-request any indices the model silently skipped.

@@ -188,7 +188,13 @@ export interface StructureOptions {
   domainTerms?: string[];
   /** One description per company of its own business, for the rewrite message. */
   employerContexts?: string[];
+  /** Built-in profile per company (same order), or null when unknown. */
+  employerProfiles?: Array<{ name: string; allowedAreas: string[]; forbidden: Array<[RegExp, string]> } | null>;
 }
+
+// Certifications must come from the template, never from the JD.
+const CERT_RE =
+  /\b(?:Certified\s+(?:[A-Z][A-Za-z&-]*\s?){1,4}|CPA|CISA|CISM|CISSP|CIA|CFE|CFA|CAMS|CRISC|FRM|PMP|CCNA|CCNP|CKA|CKAD|AWS Certified[\w\s-]*|Azure Certified[\w\s-]*)/g;
 
 const HEADING_WORD_RE = /^(experience|education|projects?|summary|skills|professional experience|work experience|certifications?)$/i;
 const SKILLS_LINE_RE = /^[A-Za-z][A-Za-z0-9 &\/+\-]{1,40}:\s*\S/;
@@ -301,6 +307,34 @@ export function findStructureProblems(
 
   const bullets = groups.flat();
 
+  // Built-in employer profiles: no work from industries the employer is not in.
+  layout.companies.forEach((co, k) => {
+    const prof = opts.employerProfiles?.[k];
+    if (!prof) return;
+    for (const i of co.indices) {
+      const t = plain(result[i]);
+      const hit = prof.forbidden.find(([re]) => re.test(t));
+      if (hit) {
+        add(
+          i,
+          `describes ${hit[1]} work, which ${prof.name} does not do; keep the same JD skill but rewrite it as work ${prof.name} really does, in one of these areas: ${prof.allowedAreas.join("; ")}`,
+        );
+      }
+    }
+  });
+
+  // Certifications not in the template (e.g. "Certified Fraud Examiner" copied from the JD).
+  if (opts.originals) {
+    const templateText = opts.originals.map((t) => plain(t)).join(" \n ");
+    result.forEach((raw, i) => {
+      if (!plain(raw) || raw === opts.originals![i]) return;
+      const certs = Array.from(new Set((plain(raw).match(CERT_RE) ?? []).map((c) => c.trim())));
+      const invented = certs.filter((c) => !templateText.includes(c));
+      if (invented.length)
+        add(i, `remove ${invented.join(", ")}: never list or claim certifications the template does not show; use the underlying skill instead (e.g. "fraud examination")`);
+    });
+  }
+
   // Hiring-industry words inside past-employer bullets ("clinical" at a bank).
   const domainRes = (opts.domainTerms ?? [])
     .filter((d) => d.length > 2)
@@ -347,6 +381,9 @@ export function findStructureProblems(
   const skillIdx = opts.originals ? skillsLineIndices(opts.originals, isList) : [];
   for (const i of skillIdx) {
     const t = plain(result[i]);
+    const cap = Math.max(plain(opts.originals![i] ?? "").length, 100);
+    if (t.length > cap)
+      add(i, `this skills line is ${t.length} characters and would wrap onto a second line; keep it to ${cap} characters or fewer (one line, like the template) by dropping the least important items`);
     const items = t.includes(":") ? t.slice(t.indexOf(":") + 1).trim() : "";
     const parts = items.split(",").map((x) => x.trim()).filter(Boolean);
     if (parts.length < 2 || parts.some((x) => HEADING_WORD_RE.test(x)) || /^[A-Z\s]+$/.test(items)) {

@@ -475,7 +475,13 @@ export async function rewriteDocx(
         // AI blanked it or wrote a section heading — keep original verbatim rather than emit junk.
         rewritten[i] = orig;
       } else {
-        rewritten[i] = `**${label}:** ${items}`;
+        // ONE-LINE LOCK: a skills line may not grow past the template line (or
+        // ~100 characters for short template lines), so it never wraps onto a
+        // second line and pushes the page over. Drop trailing items at commas.
+        const cap = Math.max(stripBoldMarkers(orig).trim().length, 100);
+        const parts = items.split(/\s*,\s*/).filter((x) => x.length > 0);
+        while (parts.length > 3 && `${label}: ${parts.join(", ")}`.length > cap) parts.pop();
+        rewritten[i] = `**${label}:** ${parts.join(", ")}`;
       }
       continue;
     }
